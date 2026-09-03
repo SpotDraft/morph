@@ -17,7 +17,7 @@ That host was built against SuperDoc v1: a JSDOM-backed `Editor`, homemade Prose
 SuperDoc now publishes a different integration:
 
 - one **Document API** (query → target → mutate → receipt) for browser and headless
-- official Node/Python/CLI SDKs that wrap the engine instead of the v1 `Editor`
+- official Node SDK (`@superdoc/sdk`) that manages an engine process instead of the v1 `Editor`
 - atomic **mutation plans**
 - stable-enough **block addresses** (`paraId` / `NodeAddress`)
 - SDK clients that can **join the same v2 collaboration room** as the browser
@@ -103,8 +103,8 @@ Verified 2026-09-03 against [docs.superdoc.dev](https://docs.superdoc.dev/) and 
 | Surface | Package | Role |
 | --- | --- | --- |
 | Document API | contract, not a package | query, target, mutate, receipt — same names in browser and headless |
-| Node automation | `@superdoc/sdk` **2.8.0** | typed handle; manages the CLI process |
-| CLI | `@superdoc/cli` **0.31.0** | bundled with the SDK |
+| Node automation | `@superdoc/sdk` **2.8.0** | typed handle; pulls `@superdoc/sdk-<platform>` binaries (not npm `@superdoc/cli`) |
+| CLI (sibling surface) | `@superdoc/cli` **0.31.0** | shell/CI only; do not install it into this host |
 | Browser editor | `superdoc` **2.11.0** | v2 engine; `editor.doc` is the Document API |
 | Agent toolkit | `@superdoc/sdk` `createAgentToolkit` | optional; we are **not** embedding it in this host |
 | Collaboration | v2 rooms via Hocuspocus, y-websocket, or Liveblocks | SDK can join the same room as the browser |
@@ -169,7 +169,7 @@ const doc = await client.open({
 });
 ```
 
-If the room already has content, `doc` is ignored and the SDK joins. If the room is empty, the DOCX seeds it. Reopening an existing room must use `onMissing: 'error'` so an empty sync cannot blank the document.
+If the room already has content, `doc` is ignored and the SDK joins. If the room is empty, the DOCX seeds it. On `@superdoc/sdk` 2.8.0, reopen of a populated room is `roomMode: 'join'`. Do not copy `onMissing: 'error'` from `@superdoc-dev/sdk` docs — that field is not on the 2.8.0 types. First seed happens only inside `promoteToShared`.
 
 This is the consistency answer. The agent and the sidebar become two clients of one room, not two stores the host reconciles.
 
@@ -202,7 +202,7 @@ flowchart TB
     Sessions[Session registry]
     Admission[RSS / worker admission]
     SDKHost[SDK client pool]
-    Rooms[v2 room server]
+    Rooms[Hocuspocus 2.x on /collaboration]
     HTTP --> Sessions
     Sessions --> SDKHost
     Sessions --> Rooms
@@ -210,8 +210,8 @@ flowchart TB
   end
 
   Agent -->|HTTP| HTTP
-  Sidebar -->|v2 WS /collaboration/:id| Rooms
-  SDKHost -->|CLI process| Engine[Document Engine]
+  Sidebar -->|v2 WS /collaboration| Rooms
+  SDKHost -->|engine process| Engine[Document Engine]
   SDKHost -->|shared mode| Rooms
   Redis[(Redis)]
   Sessions -->|meta + last-good DOCX| Redis
@@ -222,7 +222,7 @@ The host is no longer an editor. It is:
 
 1. an HTTP adapter for Document API operations
 2. a session and identity boundary
-3. a v2 collaboration room server on the same port
+3. a Hocuspocus 2.x room adapter on `/collaboration` (same port)
 4. a persistence adapter for last-good DOCX and room bytes
 5. admission control and telemetry
 
@@ -231,11 +231,11 @@ The host is no longer an editor. It is:
 | Mode | When | How the handle opens | Who else is connected |
 | --- | --- | --- | --- |
 | **Isolated** | Agent-only job, no live human | `client.open({ doc: lastGoodDocx })` | nobody |
-| **Shared** | Sidebar is, or will be, attached | `client.open({ doc, collaboration })` | SuperDoc v2 browser clients |
+| **Shared** | After `promoteToShared` | `client.open({ collaboration, roomMode: 'join' })` | SuperDoc v2 browser clients |
 
-Mode is chosen at upload or when the first browser joins. It is stored on the session. A request must not silently switch modes.
+`documents` is the only writer of `accessMode`. Upload writes isolated unless the caller requested shared and `promoteToShared` succeeds. A request must not silently switch modes. Advertising `collaborationUrl` does not set shared.
 
-Shared mode cannot ship before the sidebar is on SuperDoc v2. Until then, isolated mode is the production agent path, and the v1 collaboration stack stays only as a temporary reader for the old editor.
+Shared mode cannot ship before the sidebar is on SuperDoc v2. Until then, isolated mode is the production agent path. Existing v1 rooms remain the human-visible path for the current sidebar; the SDK never joins them. Do not create v2 rooms or return a v2 `collaborationUrl` in that window.
 
 ### 5.3 Session lifecycle
 
@@ -275,8 +275,9 @@ Warm handles are optional. TTL, memory pressure, deploy, and crash all recover f
 
 | State | Isolated | Shared |
 | --- | --- | --- |
-| Live document | CLI process behind the handle | v2 room |
-| Durable document | last-good DOCX in Redis | last-good DOCX **plus** room persistence |
+| Live document | SDK engine process behind the handle | v2 Hocuspocus room |
+| Durable snapshot | last-good DOCX in Redis | last-good DOCX (host snapshot) |
+| Recover on restart | last-good only | room blob if present; else seed last-good |
 | Identity / TTL / mode | session meta in Redis | same |
 | Browser presence | none | room awareness |
 
@@ -294,7 +295,7 @@ flowchart LR
 ```
 
 - Fastify does not load JSDOM SuperDoc.
-- Each open document is an SDK-managed CLI process (or whatever process model that SDK version actually uses — the public contract is "the SDK manages the CLI").
+- Each open document is an SDK-managed engine process. 2.8.0 default is the embedded platform binary (`processMode: 'cli'`); `documentHostPath` is an alternate host, not a reason to npm-install `@superdoc/cli`.
 - Admission rejects upload, heavy plans, export, and re-open when RSS or worker slots are exhausted (503 + `Retry-After`).
 - Close is best-effort in `finally` so a failed edit cannot leak a worker.
 
@@ -304,9 +305,9 @@ This is the replacement for Phase 2. We still need a measured budget (open quest
 
 Shared mode:
 
-1. Upload stores last-good DOCX and creates the v2 room (`roomMode: 'create'` / SDK seed).
-2. Sidebar joins that room with SuperDoc v2 (`v2Collaboration`, `roomMode: 'join'`).
-3. Agent operations open an SDK handle on the **same** `documentId`.
+1. `documents.promoteToShared` creates the Hocuspocus 2.x room (`documentId` = `sessionId`) and seeds it from last-good if empty.
+2. Sidebar joins `/collaboration` with SuperDoc v2 (`v2Collaboration`, `roomMode: 'join'`, keep `?room=` until env configs change).
+3. Agent operations open an SDK handle with `roomMode: 'join'` on that same `documentId`.
 4. Tracked changes and comments appear in the sidebar because they were applied by the engine in the room, not because we copied marks into a YDoc.
 
 V1 rooms are a different format. Do not connect a v2 editor to them. The frontend rollout and the shared-mode cutover are one change.
@@ -330,7 +331,7 @@ Names can move; the shapes must stay Document API-shaped.
 
 | Route | SuperDoc operation | Notes |
 | --- | --- | --- |
-| `POST /upload` | open + persist last-good DOCX | keep `sessionId`, `user`, `collaborationUrl` |
+| `POST /upload` | open + persist last-good DOCX | keep `sessionId`, `fileName`, `collaborationUrl`; `userid` + `username` required (breaks today's anonymous default) |
 | `POST /document/query` | `query.match` | returns items, targets, refs, `evaluatedRevision` |
 | `POST /document/extract` | `extract` / `info` | replaces most `get-content` metadata uses |
 | `POST /document/project` | `projectHtml` / `projectMarkdown` | review views + optional source map |
@@ -354,13 +355,13 @@ justitia-agent will not move atomically. Map what maps cleanly; do not preserve 
 
 | Current route | Facade behavior |
 | --- | --- |
-| `POST /search` | `query.match` with `require: 'any'`; response may still include a deprecated range field |
+| `POST /search` | `query.match` with `require: 'any'` and **case-sensitive** match to keep today's agent behavior; ranges if present are display-only |
 | `POST /get-content` | `extract` or `projectHtml` |
 | `POST /replace-in-paragraph` | `query.match` scoped to that `paraId` + `replace` |
 | `POST /insert-after-paragraph` | `create.paragraph` / structural insert `after` that address |
 | `POST /replace-all` | `query.match` `require: 'all'` + one atomic plan of `text.rewrite` |
-| `POST /replace` `{ from, to }` | **deprecated.** Prefer fail closed (400: use query or paragraph tools). A one-revision source-map translation is an open question, not the plan. |
-| `POST /insert-content` `{ position }` | **deprecated** in the same way; `afterParaId` / query address stays |
+| `POST /replace` with `from` / `to` | **fail closed (400).** Use query or paragraph tools. |
+| `POST /insert-content` with `position` | **fail closed (400).** `afterParaId` / query address stays |
 | comments / track-changes / export / upload | thin wrappers over Document API |
 
 Facade routes keep today's status-code meanings (AD-17). They must call the SDK, not `editor/replace.ts`.
@@ -371,8 +372,8 @@ Facade routes keep today's status-code meanings (AD-17). They must call the SDK,
 | --- | --- | --- |
 | 404 | session missing or expired | do not retry this session |
 | 400 | bad input, no match, ambiguous match, stale context, missing user | fix the request |
-| 503 | memory / worker admission | retry with `Retry-After` |
-| 429 | reserved if we add rate limits | retry |
+| 503 | memory / worker / persist admission | retry with `Retry-After` |
+| 429 | overload / rate limit only | retry; never use for content errors |
 
 Do not use 404 for "paragraph not found".
 
@@ -425,7 +426,7 @@ flowchart TD
 | 1 | `@superdoc/sdk` host, new `/document/*` routes, isolated open/save/close | none | query + tracked replace + export on a fixture without JSDOM |
 | 2 | last-good DOCX persistence; re-open after TTL | agent may start calling `/document/query` | kill the process, re-open session, export matches |
 | 3 | compat facade; stop calling `replace.ts` for facade traffic | agent dual-writes old and new tools | replace-regression cases pass through the facade or are retired with a documented miss |
-| 4 | v2 room server on `PORT` | sidebar SuperDoc v2 | two browsers + one SDK handle see the same tracked edit |
+| 4 | Hocuspocus 2.x on `/collaboration` | sidebar SuperDoc v2 + env lockstep | two browsers + one SDK handle see the same tracked edit |
 | 5 | delete v1 editor stack | agent removes offset tools | no JSDOM SuperDoc import remains |
 
 Step 4 is blocked on the frontend. Steps 1–3 are not.
@@ -447,10 +448,11 @@ Step 4 is blocked on the frontend. Steps 1–3 are not.
 
 ## 10. Open questions
 
-1. **Worker budget.** Measure CLI RSS on representative SpotDraft contracts. Size warm-handle limits from that number, not from the current 7680 MB JSDOM guard.
+1. **Worker budget.** Measure SDK/engine-process RSS on representative SpotDraft contracts. Size warm-handle limits from that number, not from the current 7680 MB JSDOM guard.
 2. **Sidebar v2 date.** Shared mode is gated on it. Isolated mode is not.
-3. **Legacy `from` / `to`.** Fail closed, or offer a single-revision `projectHtml` source-map translation in the facade. Recommendation: fail closed. The source map is itself revision-scoped and recreates the offset problem if we advertise it.
-4. **Hocuspocus vs y-websocket.** SuperDoc documents both. This design pins `@hocuspocus/server` 4.6.0 because that is the v2 example server. y-websocket remains acceptable if it reduces frontend churn; it is not a second collaboration architecture.
+3. **Chainguard vs `@superdoc/sdk-linux-x64` 2.8.0.** Must be executed before step 1 ships. FIPS/glibc fit is unverified.
+4. **License key on SDK 2.8.0.** Keep `SUPERDOC_PUBLIC_LICENSE_KEY` required until a cutover proves the client ignores it.
+5. **Immutable original DOCX.** Keep an upload-time original only if `reviewMode: original` cannot be served from SuperDoc's original-view projection.
 
 ---
 
@@ -463,24 +465,30 @@ Step 4 is blocked on the frontend. Steps 1–3 are not.
 | AD-3 | Query and public IDs, not PM offsets |
 | AD-4 | Multi-edit = atomic plan |
 | AD-5 | Tracked by default |
-| AD-6 | Handle lifecycle; last-good DOCX survives close |
-| AD-7 | Engine behind the CLI process boundary |
-| AD-8 | Isolated DOCX or shared v2 room, never dual-write |
-| AD-9 | SuperDoc v2 rooms only |
-| AD-10 | Last-good DOCX is durable; export is a distinct file |
-| AD-11 | Agent still talks HTTP to this host |
-| AD-12 | Explicit user on every open |
-| AD-13 | Receipts + one stale retry |
-| AD-14 | No document text in logs |
-| AD-15 | One Cloud Run port |
-| AD-16 | Compat dies; v1 write stack is deleted |
-| AD-17 | 404 / 400 / 503 meanings frozen |
+| AD-6 | Handle lifecycle; isolated recovers last-good, shared recovers the room |
+| AD-7 | Engine behind the SDK process boundary |
+| AD-8 | Isolated or shared; `documents` owns `accessMode` |
+| AD-9 | SuperDoc v2 Hocuspocus 2.x; `/collaboration`; no v2 rooms until sidebar v2 |
+| AD-10 | `documents` is the only last-good writer; export does not end the session |
+| AD-11 | Agent still talks HTTP here; frozen facade paths and `SUPEREDITOR_*` |
+| AD-12 | `userid` + `username` required; anonymous upload is a break |
+| AD-13 | `documents` retries stale once; 200 means receipt plus persist |
+| AD-14 | No document text in logs; upload analytics once after first persist |
+| AD-15 | One Cloud Run port; `instrumentation.ts` first |
+| AD-16 | Isolated writer first; v1 sidebar rooms stay until shared ships |
+| AD-17 | 404 / 400 / 503 / 429 meanings frozen |
+| AD-18 | `documents` is the only session-exists predicate |
+| AD-19 | Versioned meta / last-good / optional original / optional room keys |
+| AD-20 | `promoteToShared` is the only room create |
+| AD-21 | Shared live body is the room; last-good is a snapshot |
+| AD-22 | One admission function for HTTP and websocket |
+| AD-23 | SuperDoc license key stays required until measured otherwise |
 
 ---
 
 ## 12. Suggested next workflow
 
-1. Review this companion and the spine (especially AD-3 fail-closed vs source-map, and Hocuspocus vs y-websocket).
+1. Review the spine (AD-1–AD-23) and this companion. Binding text is the spine.
 2. Run `bmad-spec` if you want a capability contract with stable `CAP-n` ids for the new routes.
-3. Run `bmad-create-epics-and-stories` against the cutover in §8 — one epic per step, stories that a builder can implement without re-deciding AD-1 through AD-17.
-4. Do not start step 1 implementation from this file alone; use the spine as the binding text.
+3. Run `bmad-create-epics-and-stories` against the cutover in §8 — one epic per step, stories that a builder can implement without re-deciding the ADs.
+4. Measure `@superdoc/sdk-linux-x64` on Chainguard `node-fips:20` before writing step 1 code.
