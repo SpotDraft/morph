@@ -159,12 +159,14 @@ export async function buildOutline(doc: SuperDocDocument) {
 }
 
 export async function getBlock(doc: SuperDocDocument, blockId: string) {
-  const [node, extract, html] = await Promise.all([
-    doc.getNodeById({ nodeId: blockId }).catch(() => null),
-    doc.extract(),
-    doc.projectHtml({ reviewMode: "redline" } as never).catch(() => null),
-  ]);
+  const extract = await doc.extract();
   const block = extract.blocks.find((b) => b.nodeId === blockId);
+  let node: unknown = null;
+  try {
+    node = await doc.getNodeById({ id: blockId });
+  } catch {
+    node = null;
+  }
   if (!block && !node) {
     throw new MorphError("TARGET_NOT_FOUND", `Block not found: ${blockId}`, { detail: { blockId } });
   }
@@ -174,10 +176,25 @@ export async function getBlock(doc: SuperDocDocument, blockId: string) {
     type: block?.type ?? "unknown",
     text,
     surviving: text,
-    redline: html,
+    redline: redlineFromSpans(block),
     hasTrackedChanges: Boolean(block?.textSpans?.some((s) => (s.trackedChanges?.length ?? 0) > 0)),
-    node,
+    nodePresent: node != null,
   };
+}
+
+function redlineFromSpans(block?: {
+  text?: string;
+  textSpans?: Array<{ text: string; trackedChanges?: Array<{ type?: string }> }>;
+}): string {
+  if (!block?.textSpans?.length) return block?.text ?? "";
+  return block.textSpans
+    .map((span) => {
+      const kinds = span.trackedChanges ?? [];
+      if (kinds.some((t) => t.type === "delete")) return `<del>${span.text}</del>`;
+      if (kinds.some((t) => t.type === "insert")) return `<ins>${span.text}</ins>`;
+      return span.text;
+    })
+    .join("");
 }
 
 export function textOfBlock(extract: { blocks: Array<{ nodeId: string; text: string }> }, blockId: string) {
@@ -327,13 +344,15 @@ export function replaceAllSteps(
   }
 
   const replacement = { args: { replacement: { text: replace } } };
-  const refs = chosen.map((item) => item.handle?.ref).filter((ref): ref is string => Boolean(ref));
 
-  // v2 text.rewrite accepts a ref from query.match or a single text selector.
+  // One require:all step is correct and fast when nothing is skipped.
+  // Multi-step ref plans fail on this engine ("cannot use revision-bound ref
+  // targets"). Exclusions therefore fall back to sequential tracked replaces.
   if (excluded.length === 0) {
     return {
       chosen,
       excluded,
+      mode: "all" as const,
       steps: [
         {
           id: "replace-all-0",
@@ -354,22 +373,105 @@ export function replaceAllSteps(
     };
   }
 
-  if (refs.length === chosen.length && chosen.length > 0) {
-    return {
-      chosen,
-      excluded,
-      steps: chosen.map((item, i) => ({
-        id: `replace-all-${i}`,
-        op: "text.rewrite" as const,
-        where: { by: "ref" as const, ref: item.handle!.ref as string },
-        ...replacement,
-      })),
-    };
-  }
+  return { chosen, excluded, mode: "sequential" as const, steps: [] };
+}
 
-  throw new MorphError(
-    "CAPABILITY_UNAVAILABLE",
-    "v2 replace-all with exclusions needs query.match refs; omitted matches cannot use a single selector",
-    { detail: { chosen: chosen.length, refs: refs.length, excluded: excluded.length } },
+export async function applyReplaceAllSequential(
+  doc: SuperDocDocument,
+  chosen: MatchItem[],
+  args: { search: string; text: string; caseSensitive?: boolean; wholeWord?: boolean },
+) {
+  const results: Array<{ blockId?: string; ok: boolean }> = [];
+  for (const item of chosen) {
+    const target = await freshReplaceTarget(doc, item, args);
+    await applyReplace(doc, { target, text: args.text });
+    results.push({ blockId: item.address?.nodeId, ok: true });
+  }
+  return results;
+}
+
+async function freshReplaceTarget(
+  doc: SuperDocDocument,
+  item: MatchItem,
+  args: { search: string; caseSensitive?: boolean; wholeWord?: boolean },
+) {
+  const blockId = item.address?.nodeId;
+  const nodeType = item.address?.nodeType;
+  if (blockId) {
+    try {
+      const scoped = await queryMatch(doc, {
+        pattern: args.search,
+        require: "any",
+        caseSensitive: args.caseSensitive,
+        wholeWord: args.wholeWord,
+        within: { nodeId: blockId, nodeType },
+      });
+      if (scoped.items[0]?.target) return scoped.items[0].target;
+    } catch (err) {
+      if (!(err instanceof MorphError && err.code === "NO_MATCH")) throw err;
+    }
+  }
+  const remaining = await queryMatch(doc, {
+    pattern: args.search,
+    require: "any",
+    caseSensitive: args.caseSensitive,
+    wholeWord: args.wholeWord,
+  });
+  const hit =
+    remaining.items.find((candidate) => candidate.address?.nodeId === blockId) ?? remaining.items[0];
+  if (hit?.target) return hit.target;
+  if (item.target) return item.target;
+  throw new MorphError("TARGET_NOT_FOUND", "replace-all exclusion path needs a query target per match", {
+    detail: { blockId },
+  });
+}
+
+export function trackChangeIds(listed: unknown): string[] {
+  if (!listed || typeof listed !== "object") return [];
+  const rec = listed as {
+    items?: Array<{ id?: string; address?: { entityId?: string } }>;
+    total?: number;
+  };
+  const ids: string[] = [];
+  for (const item of rec.items ?? []) {
+    const id = item.id || item.address?.entityId;
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+export async function listAllTrackedChanges(doc: SuperDocDocument) {
+  const items: Array<{ id?: string; address?: { entityId?: string } }> = [];
+  const pageSize = 200;
+  let offset = 0;
+  let total = 0;
+  for (;;) {
+    const listed = await doc.trackChanges.list({ limit: pageSize, offset });
+    total = listed.total ?? listed.items?.length ?? 0;
+    const batch = listed.items ?? [];
+    items.push(...batch);
+    if (batch.length < pageSize) break;
+    offset += batch.length;
+    if (offset > 10_000) break;
+  }
+  return { items, total, ids: trackChangeIds({ items, total }) };
+}
+
+export async function decideTrackedChange(
+  doc: SuperDocDocument,
+  args: { decision: "accept" | "reject"; target: unknown; expectedRevision?: string },
+) {
+  const raw = await withRevisionRetry(doc, args.expectedRevision, (rev) =>
+    doc.trackChanges.decide({
+      decision: args.decision,
+      target: args.target as never,
+      changeMode: "direct",
+      expectedRevision: String(rev),
+    } as never),
   );
+  return {
+    ...asReceipt("trackChanges.decide", raw),
+    changeMode: "direct",
+    trackedUnsupported: true,
+  };
 }

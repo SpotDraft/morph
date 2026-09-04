@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { admitOrThrow } from "../src/admission/memory.js";
+import { admitOrThrow, hostRssMb, treeRssMb } from "../src/admission/memory.js";
 import { MorphError } from "../src/errors.js";
 import { httpErrorBody, mapEngineCode } from "../src/errors.js";
 
@@ -27,6 +27,10 @@ test("agent errors carry nextAction and never look like a bare 500", () => {
   const unknown = httpErrorBody(new MorphError("UNKNOWN_ROUTE", "Unknown route POST /nope"));
   assert.equal(unknown.retryable, false);
   assert.match(String(unknown.nextAction), /\/document\/tools/);
+});
+
+test("tree RSS is at least the Fastify process", () => {
+  assert.ok(treeRssMb() >= hostRssMb() - 0.1);
 });
 
 test("memory guard is 503 with Retry-After semantics", () => {

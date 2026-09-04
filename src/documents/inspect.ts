@@ -58,11 +58,13 @@ export async function inspectDocument(doc: SuperDocDocument) {
   return {
     revision: outline.revision,
     counts: outline.counts,
-    headings: (outline.outline ?? []).map((h) => ({
-      nodeId: h.nodeId,
-      level: h.level,
-      text: h.text,
-    })),
+    headings: extract.blocks
+      .filter((b) => b.type === "heading" || b.headingLevel != null)
+      .map((b) => ({
+        nodeId: b.nodeId,
+        level: b.headingLevel ?? 1,
+        text: (b.text ?? "").slice(0, 160),
+      })),
     blocks: outline.blocks,
     tables: [...tables.values()].map((table) => ({
       ...table,

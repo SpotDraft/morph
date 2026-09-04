@@ -30,7 +30,7 @@ export function nextActionFor(code: FailureCode): string {
       return "Use a structural before/after target from /document/inspect. Do not insert inside a heading run.";
     case "CAPABILITY_UNAVAILABLE":
     case "NO_OP":
-      return "This engine operation is unavailable or a no-op. Pick another tool from GET /document/tools.";
+      return "This engine operation is unavailable or a no-op. If the message mentions a tracked wrapper, rewrite the whole clause with /document/replace instead of a range inside the prior redline. Otherwise pick another tool from GET /document/tools.";
     case "ADMISSION":
       return "Retry after Retry-After. The host is at its memory or worker-slot budget.";
     case "PERSIST_FAILED":

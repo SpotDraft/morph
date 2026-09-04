@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { capacityReport } from "../admission/capacity.js";
-import { rssMb } from "../admission/memory.js";
+import { memorySnapshot } from "../admission/memory.js";
 import { memoryLimitMb, workerSlots } from "../config/env.js";
 import { getRegistry } from "../documents/registry.js";
 import { getHost } from "../hosts/sdk-host.js";
@@ -13,7 +13,8 @@ export async function healthRoutes(app: FastifyInstance) {
     ok: true,
     service: "morph",
     uptime: process.uptime(),
-    rssMb: Math.round(rssMb()),
+    rssMb: Math.round(memorySnapshot().treeRssMb),
+    memory: memorySnapshot(),
     memoryLimitMb: memoryLimitMb(),
     persist: persistKind(),
     host: getHost().stats(),

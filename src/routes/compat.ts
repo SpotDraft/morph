@@ -2,10 +2,13 @@ import type { FastifyInstance } from "fastify";
 import {
   applyAtomic,
   applyReplace,
+  applyReplaceAllSequential,
   assertExactlyOne,
   assertExpectedTextOnMatch,
   buildOutline,
   createComment,
+  decideTrackedChange,
+  listAllTrackedChanges,
   queryMatch,
   replaceAllSteps,
   resolveNodeType,
@@ -133,7 +136,7 @@ export async function compatRoutes(app: FastifyInstance) {
           ref: item.handle?.ref,
           address: item.address,
         }));
-        const { chosen, excluded, steps } = replaceAllSteps(
+        const { chosen, excluded, steps, mode } = replaceAllSteps(
           search,
           replace,
           match.items ?? [],
@@ -143,7 +146,7 @@ export async function compatRoutes(app: FastifyInstance) {
             wholeWord: Boolean(body.wholeWord),
           },
         );
-        if (steps.length === 0) {
+        if (chosen.length === 0) {
           return {
             ok: true,
             committed: false,
@@ -151,6 +154,24 @@ export async function compatRoutes(app: FastifyInstance) {
             excluded,
             results: [],
             replaced: 0,
+          };
+        }
+        if (mode === "sequential") {
+          const results = await applyReplaceAllSequential(doc, chosen, {
+            search,
+            text: replace,
+            caseSensitive: body.caseSensitive !== false,
+            wholeWord: Boolean(body.wholeWord),
+          });
+          return {
+            ok: true,
+            success: true,
+            committed: true,
+            matches: visible,
+            excluded,
+            results,
+            replaced: results.length,
+            mode,
           };
         }
         const receipt = await applyAtomic(doc, {
@@ -167,7 +188,8 @@ export async function compatRoutes(app: FastifyInstance) {
           matches: visible,
           excluded,
           results: chosen.map((m) => ({ blockId: m.address?.nodeId, ok: true })),
-          replaced: steps.length,
+          replaced: chosen.length,
+          mode,
           receipt: ok,
         };
       });
@@ -212,6 +234,11 @@ export async function compatRoutes(app: FastifyInstance) {
       return getRegistry().withDoc(sessionId, (doc) => doc.comments.list());
     }),
   );
+
+  app.post("/accept-all-track-changes", wrap((request) => decideAll(request, "accept")));
+  app.post("/reject-all-track-changes", wrap((request) => decideAll(request, "reject")));
+  app.post("/accept-track-changes-by-id", wrap((request) => decideByIds(request, "accept")));
+  app.post("/reject-track-changes-by-id", wrap((request) => decideByIds(request, "reject")));
 }
 
 async function replaceInParagraph(request: { body?: unknown }) {
@@ -264,6 +291,74 @@ async function insertAfter(request: { body?: unknown }) {
       changeMode: "tracked",
     } as never);
     return asReceipt("insert-after-paragraph", receipt);
+  });
+}
+
+async function decideAll(request: { body?: unknown }, decision: "accept" | "reject") {
+  const body = (request.body ?? {}) as Record<string, unknown>;
+  const sessionId = String(body.sessionId || "");
+  if (!sessionId) throw new MorphError("VALIDATION", "sessionId is required");
+  return getRegistry().mutate(sessionId, `trackChanges.${decision}All`, async (doc) => {
+    const listed = await listAllTrackedChanges(doc);
+    try {
+      await decideTrackedChange(doc, { decision, target: { kind: "all" } });
+      return {
+        success: true,
+        affectedCount: listed.total || listed.ids.length,
+        affectedIds: listed.ids,
+        skippedIds: [],
+        changeMode: "direct",
+        mode: "all",
+      };
+    } catch (err) {
+      if (listed.ids.length === 0) throw err;
+      const affectedIds: string[] = [];
+      const skippedIds: string[] = [];
+      for (const id of listed.ids) {
+        try {
+          await decideTrackedChange(doc, { decision, target: { kind: "id", id } });
+          affectedIds.push(id);
+        } catch {
+          skippedIds.push(id);
+        }
+      }
+      if (affectedIds.length === 0) throw err;
+      return {
+        success: true,
+        affectedCount: affectedIds.length,
+        affectedIds,
+        skippedIds,
+        changeMode: "direct",
+        mode: "per-id",
+      };
+    }
+  });
+}
+
+async function decideByIds(request: { body?: unknown }, decision: "accept" | "reject") {
+  const body = (request.body ?? {}) as Record<string, unknown>;
+  const sessionId = String(body.sessionId || "");
+  const ids = ([] as unknown[]).concat((body.ids as unknown[]) || []).map(String).filter(Boolean);
+  if (!sessionId) throw new MorphError("VALIDATION", "sessionId is required");
+  if (ids.length === 0) throw new MorphError("VALIDATION", "ids must be a non-empty array of strings");
+  return getRegistry().mutate(sessionId, `trackChanges.${decision}ById`, async (doc) => {
+    const affectedIds: string[] = [];
+    const skippedIds: string[] = [];
+    for (const id of ids) {
+      try {
+        await decideTrackedChange(doc, { decision, target: { kind: "id", id } });
+        affectedIds.push(id);
+      } catch {
+        skippedIds.push(id);
+      }
+    }
+    return {
+      success: true,
+      affectedCount: affectedIds.length,
+      affectedIds,
+      skippedIds,
+      changeMode: "direct",
+    };
   });
 }
 

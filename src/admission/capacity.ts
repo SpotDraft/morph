@@ -1,6 +1,6 @@
 import { memoryLimitMb, workerSlots, maxWarmHandles, handleIdleMs } from "../config/env.js";
 import { persistKind } from "../persistence/store.js";
-import { rssMb } from "./memory.js";
+import { memorySnapshot } from "./memory.js";
 
 /**
  * Measured on this image, Node 20 + @superdoc/sdk 2.8.0.
@@ -35,11 +35,15 @@ export function capacityReport(host: {
 }) {
   const pingWarm = estimateMaxWarmDocs("pingMsa");
   const tinyWarm = estimateMaxWarmDocs("tiny");
+  const memory = memorySnapshot();
   return {
     budget: {
       assumedMb: MEASURED.budgetMb,
       processLimitMb: memoryLimitMb(),
-      rssMb: Math.round(rssMb()),
+      rssMb: Math.round(memory.treeRssMb),
+      hostRssMb: Math.round(memory.hostRssMb),
+      engineRssMb: Math.round(memory.engineRssMb),
+      guardSeesEngine: true,
       reserveMb: MEASURED.reserveMb,
     },
     documents: {

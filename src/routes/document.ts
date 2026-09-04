@@ -8,6 +8,7 @@ import {
   assertExpectedTextOnMatch,
   buildOutline,
   createComment,
+  decideTrackedChange,
   getBlock,
   queryMatch,
   resolveNodeType,
@@ -277,11 +278,11 @@ export async function documentRoutes(app: FastifyInstance) {
       const body = request.body as Record<string, unknown>;
       const sessionId = sessionIdOf(request);
       return getRegistry().mutate(sessionId, "trackChanges.decide", async (doc) => {
-        const receipt = await doc.trackChanges.decide({
-          decision: body.decision as "accept" | "reject",
-          target: body.target as never,
-        } as never);
-        return asReceipt("trackChanges.decide", receipt);
+        return decideTrackedChange(doc, {
+          decision: decideDecision(body.decision),
+          target: decideTarget(body),
+          expectedRevision: body.expectedRevision as string | undefined,
+        });
       });
     }),
   );
@@ -316,6 +317,18 @@ export async function documentRoutes(app: FastifyInstance) {
       return reply.send(bytes);
     }),
   );
+}
+
+function decideDecision(value: unknown): "accept" | "reject" {
+  if (value === "accept" || value === "reject") return value;
+  throw new MorphError("VALIDATION", "decision must be accept or reject", { detail: { decision: value } });
+}
+
+function decideTarget(body: Record<string, unknown>): { kind: "id"; id: string } | unknown {
+  if (body.target && typeof body.target === "object") return body.target;
+  const id = body.id ?? body.changeId ?? body.entityId;
+  if (id) return { kind: "id", id: String(id) };
+  throw new MorphError("VALIDATION", "target or id is required", { status: 400 });
 }
 
 function relativeKind(position?: string): "before" | "after" | "documentStart" | "documentEnd" {

@@ -2,7 +2,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SuperDocClient, type SuperDocDocument } from "@superdoc/sdk";
-import { handleIdleMs, maxWarmHandles, superdocLicenseKey, workerSlots } from "../config/env.js";
+import {
+  handleIdleMs,
+  includeAuthorEmail,
+  maxWarmHandles,
+  superdocLicenseKey,
+  workerSlots,
+} from "../config/env.js";
 import { MorphError } from "../errors.js";
 import type { UserInfo } from "../types.js";
 import { admitOrThrow } from "../admission/memory.js";
@@ -114,7 +120,7 @@ export class SdkHost {
       sessionId: opts.sessionId,
       runtime: "v2",
       userName: opts.user.username || opts.user.name,
-      userEmail: opts.user.email,
+      userEmail: includeAuthorEmail() ? opts.user.email : undefined,
     });
     this.openCount += 1;
     this.warm.set(opts.sessionId, { doc, lastUsed: Date.now(), sessionId: opts.sessionId });

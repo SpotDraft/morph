@@ -66,10 +66,10 @@ On a **2 GiB** box, Ping-MSA-sized contracts:
 
 - **~80–100 warm documents** with 256 MiB headroom (`GET /document/capacity` → `documents.maxWarmAt2GiB`).
 - **8 concurrent writes** by default (`MORPH_WORKER_SLOTS`). Extra writes get 503 `ADMISSION` + `Retry-After`.
-- Reads of an already-warm doc are not slot-limited; they still hit the memory guard (`MEMORY_GUARD_RSS_MB`).
+- Reads of an already-warm doc are not slot-limited; they still hit the memory guard (`MEMORY_GUARD_RSS_MB`), which now sums **tree RSS** (Fastify + engine child).
 - Closing a handle does **not** free native engine RSS. Morph disposes the engine when the last warm handle goes idle.
 
-Set `MEMORY_GUARD_RSS_MB=2048` to enforce the 2 GiB ceiling. `MORPH_MAX_WARM_HANDLES` caps the cache (default 64). Those are independent: slots bound **in-flight writes**, warm handles bound **cached opens**.
+Set `MEMORY_GUARD_RSS_MB=2048` to enforce the 2 GiB ceiling. `MORPH_MAX_WARM_HANDLES` caps the cache (default 64). Those are independent: slots bound **in-flight writes**, warm handles bound **cached opens**. Author email is omitted from redlines unless `MORPH_INCLUDE_AUTHOR_EMAIL=true`.
 
 ## Collaboration
 
@@ -86,4 +86,6 @@ The engine can do far more than replace (tables, lists, format, headings, commen
 - Comments: `/document/comments` (labeled `direct`)
 - Multi-edit: `/document/mutations/preview` then `/document/mutations/apply`
 
-If an engine method is missing, the host returns `CAPABILITY_UNAVAILABLE` plus `nextAction` — not a 500.
+Human review (not agent tools): `POST /accept-all-track-changes`, `/reject-all-track-changes`, `/accept-track-changes-by-id`, `/reject-track-changes-by-id`, and `POST /document/track-changes/decide`. Decide is `changeMode: "direct"`.
+
+If an engine method is missing, the host returns `CAPABILITY_UNAVAILABLE` plus `nextAction` — not a 500. Track-over-track spans that refuse a range rewrite should be retried as a whole-clause `/document/replace`.

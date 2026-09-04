@@ -24,4 +24,7 @@
 - Comments are labeled `direct` — the engine refuses tracked comment create.
 - Agent catalog is `GET /document/tools`. First read is `POST /document/inspect`. Capacity is `GET /document/capacity`. See `AGENT.md`.
 - Redis (or file store) is last-good + meta only. Warm handles are a cache (`MORPH_MAX_WARM_HANDLES`). Write slots (`MORPH_WORKER_SLOTS`) bound in-flight mutates. Engine process is recycled when the last handle closes — closeHandle does not free native RSS by itself.
+- Memory admission uses tree RSS (Fastify + engine children), not host-only `process.memoryUsage().rss`.
+- `trackChanges.decide` and the v1 accept/reject facade send `changeMode: "direct"`. They are human review routes, not agent tools.
+- `replace-all` reports `replaced: chosen.length`. Exclusions fall back to sequential tracked replaces (v2 rejects multi-step ref plans).
 - Errors must include `code` + `nextAction`. Unknown engine throws become 503 ENGINE_FAILURE, never a bare 500. Unknown routes are 400 UNKNOWN_ROUTE.

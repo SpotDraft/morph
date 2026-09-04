@@ -174,6 +174,7 @@ test("replace-all returns a visible set, not a bare count", async () => {
   assert.ok(body.matches.length >= 1);
   assert.ok("excluded" in body);
   assert.ok(body.committed === true || body.replaced >= 1);
+  assert.equal(body.replaced, body.matches.length);
   assert.ok(!("count" in body && !body.matches));
   const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
   assert.match(String(content.json().text || ""), /Vendor/);
@@ -356,6 +357,7 @@ test("inspect and tools give the agent addresses without a full dump", async () 
   const tools = await boot.app.inject({ method: "GET", url: "/document/tools" });
   assert.equal(tools.statusCode, 200);
   assert.ok(tools.json().tools.some((t: { id: string }) => t.id === "inspect"));
+  assert.ok(!tools.json().tools.some((t: { path: string }) => t.path.includes("accept") || t.path.includes("track-changes/decide")));
   const inspect = await boot.app.inject({
     method: "POST",
     url: "/document/inspect",
@@ -367,6 +369,9 @@ test("inspect and tools give the agent addresses without a full dump", async () 
   assert.ok(Array.isArray(body.tables));
   assert.ok(body.tables[0]?.cells?.some((c: { text: string }) => c.text.includes("Net 30")));
   assert.match(String(body.targeting), /Never from\/to/);
+  assert.ok(body.headings.every((h: { text: string }) => h.text.length <= 160));
+  assert.ok(body.headings.length >= 1);
+  assert.ok(body.headings.length <= body.blocks.length);
 });
 
 test("table cell and format tools edit through the engine", async () => {
@@ -405,6 +410,7 @@ test("capacity reports 2 GiB warm-doc and write-slot guidance", async () => {
   assert.ok(body.requests.maxConcurrentWrites >= 1);
   assert.equal(body.persist.sessionful, true);
   assert.equal(body.collaboration.v2Rooms, false);
+  assert.equal(body.budget.guardSeesEngine, true);
 });
 
 test("missing table cell is TARGET_NOT_FOUND with nextAction, not a 500", async () => {
@@ -418,6 +424,98 @@ test("missing table cell is TARGET_NOT_FOUND with nextAction, not a 500", async 
   assert.equal(res.statusCode, 400, res.body);
   assert.equal(res.json().code, "TARGET_NOT_FOUND");
   assert.match(String(res.json().nextAction), /inspect/i);
+});
+
+test("replace-all exclusions skip the definition block", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const term = await boot.app.inject({
+    method: "POST",
+    url: "/document/find-term",
+    payload: { sessionId, term: "Supplier" },
+  });
+  assert.equal(term.statusCode, 200, term.body);
+  const definitionBlockId = term.json().definitionBlockId;
+  assert.ok(definitionBlockId);
+  const res = await boot.app.inject({
+    method: "POST",
+    url: "/replace-all",
+    payload: {
+      sessionId,
+      search: "Supplier",
+      replace: "Vendor",
+      caseSensitive: true,
+      wholeWord: true,
+      excludeBlockIds: [definitionBlockId],
+    },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.ok(res.json().excluded?.length >= 1);
+  assert.ok(res.json().replaced >= 1);
+  assert.equal(res.json().replaced, res.json().matches.length - res.json().excluded.length);
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  const text = String(content.json().text || "");
+  assert.match(text, /"Supplier" means/);
+  assert.match(text, /Vendor/);
+});
+
+test("block is token-lean and does not attach the whole-document HTML", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const inspect = await boot.app.inject({ method: "POST", url: "/document/inspect", payload: { sessionId } });
+  const heading = inspect.json().headings[0];
+  assert.ok(heading?.nodeId);
+  const block = await boot.app.inject({
+    method: "POST",
+    url: "/document/block",
+    payload: { sessionId, blockId: heading.nodeId },
+  });
+  assert.equal(block.statusCode, 200, block.body);
+  assert.ok(block.body.length < 8_000, `block payload was ${block.body.length}`);
+  assert.doesNotMatch(String(block.json().redline || ""), /Net 30/);
+  assert.ok(block.json().text);
+});
+
+test("accept tracked changes uses changeMode direct", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const replaced = await boot.app.inject({
+    method: "POST",
+    url: "/document/replace",
+    payload: { sessionId, oldText: "one (1) year", newText: "two (2) years", caseSensitive: true },
+  });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  const listed = await boot.app.inject({ method: "GET", url: `/document/track-changes?sessionId=${sessionId}` });
+  assert.equal(listed.statusCode, 200, listed.body);
+  const items = listed.json().items ?? [];
+  assert.ok(items.length >= 1, listed.body);
+  const accepted = await boot.app.inject({
+    method: "POST",
+    url: "/accept-all-track-changes",
+    payload: { sessionId },
+  });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.ok(accepted.json().affectedCount >= 1);
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  assert.match(String(content.json().text || ""), /two \(2\) years/);
+});
+
+test("list insert accepts a heading-typed numbered clause", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const inspect = await boot.app.inject({ method: "POST", url: "/document/inspect", payload: { sessionId } });
+  const heading = inspect.json().headings?.[0];
+  assert.ok(heading?.nodeId);
+  const listed = await boot.app.inject({
+    method: "POST",
+    url: "/document/list/insert",
+    payload: { sessionId, anchorId: heading.nodeId, position: "after", content: "A new numbered sibling." },
+  });
+  assert.notEqual(listed.json().code, "INVALID_ANCHOR", listed.body);
+  if (listed.statusCode !== 200) {
+    assert.ok(listed.json().code);
+    assert.ok(listed.json().nextAction);
+  }
 });
 
 test("heading and list insert use structural anchors", async () => {

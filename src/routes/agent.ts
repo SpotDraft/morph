@@ -182,12 +182,8 @@ export async function agentRoutes(app: FastifyInstance) {
       if (!anchorId) throw new MorphError("INVALID_ANCHOR", "anchorId of an existing list item is required");
       if (!content) throw new MorphError("VALIDATION", "content is required");
       return getRegistry().mutate(sessionId, "lists.insert", async (doc) => {
-        const nodeType = await resolveNodeType(doc, anchorId, "listItem");
-        if (nodeType !== "listItem" && nodeType !== "paragraph") {
-          throw new MorphError("INVALID_ANCHOR", "anchorId must be a list item from inspect.lists", {
-            detail: { nodeType },
-          });
-        }
+        // Numbered clauses on real contracts often type as heading. The engine
+        // still accepts lists.insert; do not reject on extract type.
         const raw = await withRevisionRetry(doc, body.expectedRevision as string | undefined, (rev) =>
           doc.lists.insert({
             target: { kind: "block", nodeType: "listItem", nodeId: anchorId },

@@ -34,6 +34,11 @@ export function memoryGuardEnabled(): boolean {
   return process.env.ENABLE_MEMORY_GUARD?.toLowerCase() !== "false";
 }
 
+/** Redline w:authorEmail is opt-in. Default omits email from the exported DOCX. */
+export function includeAuthorEmail(): boolean {
+  return process.env.MORPH_INCLUDE_AUTHOR_EMAIL?.toLowerCase() === "true";
+}
+
 export function superdocLicenseKey(): string {
   const value = process.env.SUPERDOC_PUBLIC_LICENSE_KEY?.trim();
   if (!value) {

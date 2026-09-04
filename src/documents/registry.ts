@@ -127,7 +127,10 @@ export class DocumentRegistry {
       try {
         result = await runOnce(active, meta);
       } catch (err) {
-        if (!isRetryable(err)) throw err;
+        if (!isRetryable(err)) {
+          await this.host.closeHandle(sessionId);
+          throw err;
+        }
         await this.host.closeHandle(sessionId);
         const rec = await this.persist.load(sessionId);
         if (!rec) throw err;
@@ -136,7 +139,12 @@ export class DocumentRegistry {
           user: rec.meta.user,
           lastGood: rec.lastGood,
         });
-        result = await runOnce(active, rec.meta);
+        try {
+          result = await runOnce(active, rec.meta);
+        } catch (retryErr) {
+          await this.host.closeHandle(sessionId);
+          throw retryErr;
+        }
       }
 
       await this.flushLastGood(sessionId, active, result.receipt);

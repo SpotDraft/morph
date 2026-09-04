@@ -21,6 +21,15 @@ export function fromEngineError(err: unknown): MorphError | null {
   if (/encrypted|password.?protect/i.test(message)) {
     return new MorphError("ENCRYPTED_DOC", message, { detail: { engineCode: code, details } });
   }
+  if (/tracked-wrapper|unsupported-tracked/i.test(message)) {
+    return new MorphError("CAPABILITY_UNAVAILABLE", message, {
+      detail: {
+        engineCode: code,
+        details,
+        workaround: "Rewrite the whole clause with /document/replace; do not target a range inside a prior redline.",
+      },
+    });
+  }
   if (/unavailable|not supported|unsupported|not implemented/i.test(message)) {
     return new MorphError("CAPABILITY_UNAVAILABLE", message, { detail: { engineCode: code, details } });
   }

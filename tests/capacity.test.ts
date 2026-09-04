@@ -21,6 +21,7 @@ test("capacity report stays sessionful and does not claim v2 rooms", () => {
     maxWarm: 64,
   });
   assert.equal(report.persist.sessionful, true);
+  assert.equal(report.budget.guardSeesEngine, true);
   assert.equal(report.collaboration.isolatedEditsUseHocuspocus, false);
   assert.match(report.notes.join(" "), /Redis is required on Cloud Run/);
 });
