@@ -7,12 +7,18 @@ paradigm: document-engine command host
 scope: This SuperDoc service, justitia-agent HTTP tools, and angular-frontend sidebar collaboration
 status: final
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-04
 binds: [host, documents, routes, collaboration, persistence, agent-tools, sidebar-viewer]
 sources:
-  - docs.superdoc.dev Document API and Agents guides, fetched 2026-09-03
+  - docs.superdoc.dev Document API and Agents guides, fetched 2026-09-03, lists.get / NodeAddress re-checked 2026-09-04
   - npm and SuperDoc v2 collaboration example, re-checked 2026-09-03 after reviewer gate
   - brownfield code in this repository
+  - document_editor_redesign.md (later problem analysis; SDK path + partnership)
+  - document-editor-redesign-spec.md (earlier draft; license still open)
+  - document_editor_plan.txt (Harvey/Nutrient research + memory correction)
+  - lld-phase-1-structural-editing.md
+  - lld-phase-2-runtime-memory.md
+  - lld-phase-3-consistency-ripple.md
 companions:
   - ARCHITECTURE-REDESIGN.md
 ---
@@ -52,7 +58,7 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** all
 - **Prevents:** a second home-grown editor, sync, or mark-fabrication stack beside SuperDoc
-- **Rule:** Every document change is a Document API operation on a bound handle. The only durable writes of document bytes are (a) `documents` persisting an engine export as last-good DOCX, and (b) the v2 room protocol applying Document API operations from a joined client. Persistence stores opaque blobs; it does not merge Yjs. Host code must not write ProseMirror transactions or fabricate `trackInsert` / `trackDelete` marks. Import-time DOCX normalize may run once before first `open`. Post-engine OOXML rewrite is forbidden except the bytes the SDK save/export already produced.
+- **Rule:** Every document change is a Document API operation on a bound handle. The only durable writes of document bytes are (a) `documents` persisting an engine export as last-good DOCX, and (b) the v2 room protocol applying Document API operations from a joined client. Persistence stores opaque blobs; it does not merge Yjs. Host code must not write ProseMirror transactions or fabricate `trackInsert` / `trackDelete` marks. Import-time DOCX normalize may run once before first `open`. Post-engine OOXML rewrite is forbidden except the bytes the SDK save/export already produced. Raw string-replace on `document.xml` (or any OOXML part) is not a write path: run fragmentation is a Word format property, and Microsoft's own docs warn that naive XML replace can corrupt the file. A second engine (Aspose, Open XML SDK + Clippit, in-process `prosemirror-transform`) is not a write path unless a measured SDK fidelity or memory spike fails and a new architecture run replaces this spine.
 
 ### AD-2 — Official SDK is the only Node integration surface
 
@@ -64,13 +70,13 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** routes, agent-tools, sidebar-viewer
 - **Prevents:** integer `from` / `to` / `position` becoming a targeting model on any mutate path, including the facade
-- **Rule:** Host `Target` is a SuperDoc target or ref from `query.match` / `extract`, or a `NodeAddress` (`paraId` when SuperDoc exposes it). Mutation-grade query uses `require: exactlyOne` when one clause must change, and `require: all` only for intentional replace-all. `find` is discovery-only and is not a write locator. Pending tracked deletions stay excluded unless the caller sets `includeDeletedText`. After any mutation or reopen, query again. Facade `from` / `to` and `position` fail closed with 400. Do not put `sdBlockId` on the wire.
+- **Rule:** Host `Target` is a SuperDoc target or ref from `query.match` / `extract`, or a `NodeAddress` (`paraId` when SuperDoc exposes it). Mutation-grade query uses `require: exactlyOne` when one clause must change. `require: all` is the engine cardinality for an apply step after the match set is visible (AD-25), or when the caller explicitly opts into apply-all. `find` is discovery-only and is not a write locator. Pending tracked deletions stay excluded unless the caller sets `includeDeletedText`. After any mutation or reopen, query again. Facade `from` / `to` and `position` fail closed with 400. Do not put `sdBlockId` or any host-minted cell/table `blockId` on the wire. Insert-at-top is structural `before` the first addressable block, never a character position. The agent never types a list-number prefix; numbering is engine-owned (`lists.get` marker/path).
 
 ### AD-4 — Multi-edit work is an atomic mutation plan
 
 - **Binds:** routes, agent-tools, documents
 - **Prevents:** partially applied multi-step agent turns
-- **Rule:** Two or more edits that must succeed or fail together use `mutations.preview` then `mutations.apply` with `atomic` true and a unique step id. One independent edit may use the matching direct operation. Preview validity is not a lock; apply still carries `expectedRevision`. Cross-route turns are not one plan; the agent must not split one logical change across `/document/mutations/apply` and a compat write.
+- **Rule:** Two or more edits that must succeed or fail together use `mutations.preview` then `mutations.apply` with `atomic` true and a unique step id. One independent edit may use the matching direct operation. Preview validity is not a lock; apply still carries `expectedRevision`. Preview is invisible (AD-27). Cross-route turns are not one plan; the agent must not split one logical change across `/document/mutations/apply` and a compat write.
 
 ### AD-5 — Consequential agent edits are tracked
 
@@ -88,7 +94,7 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** hosts, documents
 - **Prevents:** JSDOM SuperDoc living in the Fastify heap
-- **Rule:** `hosts` owns SDK client / engine-process lifecycle and worker-slot admission. The API process owns HTTP, Redis, and the Hocuspocus 2.x room adapter. Document CPU and native memory run in the SDK-managed process (embedded CLI binary by default; `documentHostPath` only if measured later). Do not import `superdoc` or happy-dom into the API process to “share” the engine.
+- **Rule:** `hosts` owns SDK client / engine-process lifecycle and worker-slot admission. The API process owns HTTP, Redis, and the Hocuspocus 2.x room adapter. Document CPU and native memory run in the SDK-managed process (embedded CLI binary by default; `documentHostPath` only if measured later). Recycle a worker on a memory ceiling or idle TTL so the OS reclaims native memory; that is the answer to JSDOM retention, not “zero DOM.” The converter still needs DOM APIs inside the engine process. Do not import `superdoc` or happy-dom into the API process to “share” the engine. Do not inject a global `window` / `document` into Fastify (today’s JSDOM race). Do not keep a live editor or DOM in the API heap for an idle session.
 
 ### AD-8 — Isolated DOCX and shared room are the only two access modes
 
@@ -106,7 +112,7 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** documents, persistence, export, routes
 - **Prevents:** Redis YDoc snapshots as the only recoverability, and three modules persisting last-good
-- **Rule:** `documents` is the only caller of persist-last-good. Bytes come only from engine export of a host-bound handle. Persist after every successful Document API write that changes the DOCX, including comments, and after shared last-client-disconnect flush. Persist failure fails the HTTP mutation (503); do not return 200 on a successful receipt that did not persist. Export writes a distinct artifact, does not overwrite last-good, and does not delete the session. Isolated sessions have no room blob. Shared room blob is opaque and never used to overwrite an existing room on seed.
+- **Rule:** `documents` is the only caller of persist-last-good. Bytes come only from engine export of a host-bound handle. Persist after every successful Document API write that changes the DOCX, including comments, and after shared last-client-disconnect flush. Persist failure fails the HTTP mutation (503); do not return 200 on a successful receipt that did not persist. Export writes a distinct artifact, does not overwrite last-good, and does not delete the session. Export must leave Word `REF` / number fields correct or marked dirty so Word refreshes them on open; validate this in the SDK fidelity spike and add an engine field-update if cached field text stays stale. Isolated sessions have no room blob. Shared room blob is opaque and never used to overwrite an existing room on seed.
 
 ### AD-11 — This service remains the agent HTTP boundary
 
@@ -124,7 +130,7 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** documents, routes
 - **Prevents:** throw-less success, route-plus-agent retry storms, and 200 after a lost persist
-- **Rule:** `documents` is the only retry owner. On `REVISION_MISMATCH`, `STALE_REVISION`, `ADDRESS_STALE`, or `TARGET_NOT_FOUND`, it re-queries and retries once. Routes and justitia-agent must not implement a second stale retry. Never drop `expectedRevision`. `NO_OP` and capability failures do not retry unchanged. Compare before/after revision before any retry. HTTP success for a mutation is `receipt.success` and last-good persist ok. Facade `{ success }` must equal `receipt.success`. After the single retry, stale / not-found / validation / ambiguous / context-guard are 400. Persist or engine-worker failure is 503. Never 200 plus a failed receipt on facade routes the old agent still calls.
+- **Rule:** `documents` is the only retry owner. On `REVISION_MISMATCH`, `STALE_REVISION`, `ADDRESS_STALE`, or `TARGET_NOT_FOUND`, it re-queries and retries once. Routes and justitia-agent must not implement a second stale retry. Never drop `expectedRevision`. `NO_OP` and capability failures do not retry unchanged. Compare before/after revision before any retry. HTTP success for a mutation is `receipt.success` and last-good persist ok. Facade `{ success }` must equal `receipt.success`. After the single retry, stale / not-found / validation / ambiguous / context-guard are 400. Persist or engine-worker failure is 503. Never 200 plus a failed receipt on facade routes the old agent still calls. Every agent-correctable failure carries a typed `code` plus machine `detail` (never a bare “not successful”). Copy SuperDoc codes; when SuperDoc has no equivalent the host uses `AMBIGUOUS_MATCH`, `PRECONDITION_FAILED`, `STALE_TARGET`, `WOULD_SPLIT_BLOCK`, `WOULD_DAMAGE_TRACKED_CHANGE`, `STRUCTURE_VIOLATION`, or `INVALID_ANCHOR`. This is what stops search/replace loops.
 
 ### AD-14 — Telemetry never carries document text
 
@@ -184,7 +190,37 @@ None. Initiative altitude; no parent spine.
 
 - **Binds:** host, documents
 - **Prevents:** booting without org attribution or inventing a second license injection
-- **Rule:** `SUPERDOC_PUBLIC_LICENSE_KEY` remains required at process start until a measured SDK 2.8.0 cutover proves the key is unused. Pass it into the SDK client or documented license config. Do not fall through to SuperDoc's unattributed default.
+- **Rule:** `SUPERDOC_PUBLIC_LICENSE_KEY` remains required at process start until a measured SDK 2.8.0 cutover proves the key is unused. Pass it into the SDK client or documented license config. Do not fall through to SuperDoc's unattributed default. This is process attribution, not the AGPL/commercial license question. The commercial SuperDoc partnership already covers hosted use of the engine and SDK.
+
+### AD-24 — Agent structure is a compact outline, not a flattened string
+
+- **Binds:** routes, agent-tools, documents
+- **Prevents:** the half-blind agent view (tables collapsed to text, list nesting flattened, headers/footers/footnotes/content-controls invisible) and dumping a full extract into the model context
+- **Rule:** The agent-facing “what is this document” read is a compact outline in document order. Each item has a SuperDoc `NodeAddress` / `paraId` (not a host-minted id), a semantic role (heading level, body, list item, table / row / cell, footnote, content control, section), parent and depth, a computed numbering label when the engine has one, a short text preview plus length, and whether the block has tracked changes. Tables, nested lists, footnotes, headers/footers, and content controls are nodes, not loose text. Full block text is on demand and includes both redline markup and surviving text. Numbering labels come from Document API `lists.get` (marker / path / level) or equivalent extract/info fields — not from walking `editor.state` or SuperDoc `NumberingManager` internals. Outline calls stay token-lean; do not return the full body on the outline route.
+
+### AD-25 — Bulk change is a visible set, never a bare count
+
+- **Binds:** routes, agent-tools
+- **Prevents:** `replace-all` that returns only a count, so the agent cannot verify and loops on search
+- **Rule:** “Change X everywhere” is two steps. Discovery returns every match (address, snippet, context) **and** every exclusion with a reason (look-alike, wrong block type, inside a larger word, heading/footnote scoped out). Apply is one atomic plan over the chosen set and returns per-item receipts (before / after / surviving, or the SuperDoc receipt). Facade `/replace-all` must not use a bare count as the verification surface. `require: all` is the apply-step cardinality after the set is visible, or an explicit apply-all opt-in. Semantic defined-term resolution (`find-term`) is AD-28 and may replace substring discovery later.
+
+### AD-26 — Content precondition sits beside revision
+
+- **Binds:** routes, documents, agent-tools
+- **Prevents:** applying a still-valid revision to a block whose clause text is no longer the one the agent read
+- **Rule:** Every single-block text mutation accepts `expectedText` / `expectedContext` (today’s `/replace-in-paragraph` field). When present, that string must appear in the addressed block before apply. Failure is `PRECONDITION_FAILED` or `STALE_TARGET` and HTTP 400. This is in addition to `expectedRevision`. Facade paragraph tools keep the field. Canonical `/document/*` must accept it and check it before apply. Revision alone is not proof of clause identity.
+
+### AD-27 — Preview is invisible; only apply is visible
+
+- **Binds:** documents, routes, collaboration
+- **Prevents:** dry-runs leaking to last-good, room viewers, or a later apply seeing a half-written document
+- **Rule:** `mutations.preview` and any host `mode: preview` do not persist last-good, do not push to a shared room, do not change the session revision, and do not become visible to connected viewers. Only a successful apply/commit does those things. Human approval later reuses this same preview payload; do not build a second pending-edit store. Risk-class default: single-block replace / set-text with no tracked-change overlap may apply in one call; insert / move / delete and any overlap with another author’s tracked change default to preview-first.
+
+### AD-28 — Consistency index is host-owned planning state
+
+- **Binds:** documents, routes, agent-tools
+- **Prevents:** treating “consistency ripple” as REST-versus-Yjs; re-scanning only touched blocks for references; dumping the index to the model; auto-fixing drift
+- **Rule:** After the isolated Document API cutover, the host owns a session-scoped consistency index used only as answers to planning queries: `find-term` (definition block + occurrences) and `check-references` (dangling + drifted). The agent never receives the raw index. Term occurrences invalidate on the committed `touchedBlockIds` (`O(changed)`). Cross-reference resolution depends on global numbering: after any structural insert / delete / move, re-resolve **all** refs against fresh outline labels (a map lookup, not a text rescan). Flag drift — “this `Section 6.3` now points at a different block” — and do not auto-fix. Auto-numbered lists self-heal in the engine; manually numbered (literal-text) sections require the agent to plan a renumber cascade. Field-based refs depend on AD-10 field refresh. These rules are binding when the capability ships; do not implement the index by walking JSDOM `editor.state`.
 
 ## Consistency Conventions
 
@@ -198,6 +234,10 @@ None. Initiative altitude; no parent spine.
 - If anyone later adds `createAgentToolkit`, dispatch only advertised tool names. Never pass through `superdoc_execute_code` or `agent_*`.
 - Save/export uses a distinct output path and does not set SuperDoc `force` except when overwriting a known host artifact.
 - Current HTTP review routes for accept/reject may remain for humans; they are not agent tools.
+- The older `DocumentEditingPort` / `SuperdocLocalAdapter` seam is the SuperDoc Document API itself. Do not keep a parallel in-process ProseMirror adapter “until the SDK is ready.”
+- Phase 0 patches on the current JSDOM stack (heading-as-block, typed errors, mandatory `expectedContext`) are optional tactical work. They are not a second target architecture and must not extend `editor/replace.ts`.
+- Fidelity gates use the named torture corpus: insert-above-heading, table-cell edit, nested-clause renumber, defined-term ripple, track-over-track, and the Section 6.3 reference-drift fixture from `lld-phase-3-consistency-ripple.md`.
+- Commercial SuperDoc partnership covers AGPL for this hosted product. That is separate from AD-23’s process license key.
 
 ## Stack
 
@@ -243,6 +283,11 @@ Seed only. Once code exists, the tree in the repo is the authority.
 - Content-control / template-first editing as the default agent style.
 - Productized version history.
 - Agent-driven accept/reject of tracked changes.
+- Human-in-the-loop approval UI (same AD-27 preview payload; no second store).
+- AD-28 `find-term` / `check-references` implementation (rules are binding; code ships after isolated Document API cutover).
+- Cross-references by name (“the Termination Clause”) rather than number.
+- Serializing synthetic cell IDs into OOXML for cross-version diffing (default: no; SuperDoc `NodeAddress` only).
+- DIY `prosemirror-transform` + shared happy-dom pool, Aspose.Words, or Open XML SDK + Clippit as a write engine — only if a measured SDK fidelity or memory spike fails, and then only in a new architecture run.
 - Hocuspocus 4.x / Node 22.
 - Whether `@superdoc/sdk-linux-x64` 2.8.0 runs on Chainguard `node-fips:20` (must be measured before step 1 ships).
 - Whether SDK 2.8.0 still consumes `SUPERDOC_PUBLIC_LICENSE_KEY` (keep the key until measured).
@@ -252,6 +297,8 @@ Seed only. Once code exists, the tree in the repo is the authority.
 - Measured SDK/engine-process RSS for representative contracts, and how many concurrent warm handles fit the current 8 GiB Cloud Run budget (`NODE_OPTIONS` max-old-space 7680, `MEMORY_GUARD_RSS_MB` 7680).
 - angular-frontend SuperDoc v2 ship date, which gates shared-mode and v1 room retirement.
 - Whether upload should keep an immutable `original` DOCX for `reviewMode: original` projections, or whether last-good plus SuperDoc original-view is enough.
+- Whether SuperDoc export already refreshes `REF` / number fields or only emits them dirty (AD-10; old LLD Q-A4).
+- Whether `extract` / `info` already carry computed numbering labels for a whole outline, or the host must call `lists.get` per list item (AD-24).
 
 ## Operational Envelope
 
