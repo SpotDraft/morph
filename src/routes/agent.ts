@@ -3,6 +3,7 @@ import { AGENT_TOOLS, agentContract } from "../agent/catalog.js";
 import { capacityReport } from "../admission/capacity.js";
 import { inspectDocument } from "../documents/inspect.js";
 import {
+  applyReplace,
   assertExactlyOne,
   queryMatch,
   resolveNodeType,
@@ -10,7 +11,7 @@ import {
 } from "../documents/query.js";
 import { asReceipt } from "../documents/receipts.js";
 import { getRegistry } from "../documents/registry.js";
-import { relativeAt, resolveCellTarget } from "../documents/targets.js";
+import { relativeAt, resolveCellTarget, rowPosition } from "../documents/targets.js";
 import { MorphError } from "../errors.js";
 import { getHost } from "../hosts/sdk-host.js";
 import { sessionIdOf, wrap } from "./helpers.js";
@@ -40,17 +41,44 @@ export async function agentRoutes(app: FastifyInstance) {
       const sessionId = sessionIdOf(request);
       const text = String(body.text ?? body.newText ?? "");
       if (!text) throw new MorphError("VALIDATION", "text is required");
-      return getRegistry().mutate(sessionId, "tables.setCellText", async (doc) => {
+      return getRegistry().mutate(sessionId, "table.cell", async (doc) => {
         const cell = await resolveCellTarget(doc, body);
+        // v2 tables.setCellText is not tracked-capable. Rewrite the cell
+        // paragraph so the agent still gets a Word redline.
+        if (cell.text) {
+          const match = await queryMatch(doc, {
+            pattern: cell.text,
+            require: "exactlyOne",
+            caseSensitive: true,
+            within: { nodeId: cell.paragraphId, nodeType: "paragraph" },
+          });
+          assertExactlyOne(match, cell.text);
+          return applyReplace(doc, {
+            target: match.items[0]?.target,
+            text,
+            expectedRevision: (body.expectedRevision as string | undefined) ?? match.evaluatedRevision,
+          }).then((raw) => asReceipt("table.cell", raw, match.evaluatedRevision));
+        }
+        if (!cell.tableNodeId) {
+          throw new MorphError("TARGET_NOT_FOUND", "Empty cell has no table nodeId to write", {
+            detail: { tableOrdinal: cell.tableOrdinal, rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
+          });
+        }
         const raw = await withRevisionRetry(doc, body.expectedRevision as string | undefined, (rev) =>
           doc.tables.setCellText({
             text,
-            target: { kind: "block", nodeType: "tableCell", nodeId: cell.nodeId },
+            target: { kind: "block", nodeType: "table", nodeId: cell.tableNodeId as string },
+            rowIndex: cell.rowIndex,
+            columnIndex: cell.columnIndex,
             expectedRevision: String(rev),
-            changeMode: "tracked",
+            changeMode: "direct",
           }),
         );
-        return asReceipt("tables.setCellText", raw, body.expectedRevision as string | undefined);
+        return {
+          ...asReceipt("tables.setCellText", raw, body.expectedRevision as string | undefined),
+          changeMode: "direct",
+          trackedUnsupported: true,
+        };
       });
     }),
   );
@@ -81,6 +109,7 @@ export async function agentRoutes(app: FastifyInstance) {
             { detail: { tableOrdinal: table.tableOrdinal, rows: table.rows, cols: table.cols } },
           );
         }
+        const position = rowPosition(body.position as string | undefined);
         const raw =
           action === "delete"
             ? await withRevisionRetry(doc, body.expectedRevision as string | undefined, (rev) =>
@@ -95,7 +124,7 @@ export async function agentRoutes(app: FastifyInstance) {
                 doc.tables.insertRow({
                   target,
                   rowIndex,
-                  position: body.position === "before" ? "before" : "after",
+                  position,
                   expectedRevision: String(rev),
                   changeMode: "tracked",
                 }),

@@ -79,7 +79,7 @@ Isolated agent edits **do not go through Hocuspocus**. `collaborationUrl` is adv
 
 The engine can do far more than replace (tables, lists, format, headings, comments, track changes). Morph exposes the operations the agent needs to *target correctly*:
 
-- Tables: `/document/table/cell` (set text by cell `nodeId` / row+col), `/document/table/row`
+- Tables: `/document/table/cell` rewrites the cell paragraph as a **tracked** replace (v2 `tables.setCellText` is not tracked-capable). `/document/table/row` uses engine `above`/`below`.
 - Format: `/document/format` (`bold|italic|underline|strike|highlight`)
 - Lists: `/document/list/insert` — never type `4.2(a)`
 - Headings: `/document/heading`

@@ -1,39 +1,61 @@
 import type { SuperDocDocument } from "@superdoc/sdk";
 import { MorphError } from "../errors.js";
-import { inspectDocument, type InspectTable } from "./inspect.js";
+import { inspectDocument, type InspectCell, type InspectTable } from "./inspect.js";
+
+export interface ResolvedCell {
+  paragraphId: string;
+  cellNodeId: string | null;
+  tableNodeId: string | null;
+  tableOrdinal: number;
+  rowIndex: number;
+  columnIndex: number;
+  text: string;
+}
 
 export async function resolveCellTarget(
   doc: SuperDocDocument,
   body: Record<string, unknown>,
-): Promise<{ nodeId: string; rowIndex?: number; columnIndex?: number; tableOrdinal: number }> {
-  const explicit = String(body.cellId || body.nodeId || "");
-  const rowIndex = body.rowIndex != null ? Number(body.rowIndex) : undefined;
-  const columnIndex = body.columnIndex != null ? Number(body.columnIndex) : undefined;
-  const tableOrdinal = body.tableOrdinal != null ? Number(body.tableOrdinal) : 0;
-
-  if (explicit) {
-    return { nodeId: explicit, rowIndex, columnIndex, tableOrdinal };
-  }
-
+): Promise<ResolvedCell> {
   const inspected = await inspectDocument(doc);
+  const tableOrdinal = body.tableOrdinal != null ? Number(body.tableOrdinal) : 0;
   const table = pickTable(inspected.tables, tableOrdinal);
   if (!table) {
     throw new MorphError("TARGET_NOT_FOUND", "No table in this document", {
       detail: { tableOrdinal, tableCount: inspected.tables.length },
     });
   }
-  const cell = table.cells.find((c) => c.row === rowIndex && c.col === columnIndex);
-  if (!cell?.nodeId) {
+
+  const explicit = String(body.cellId || body.nodeId || "");
+  const rowIndex = body.rowIndex != null ? Number(body.rowIndex) : undefined;
+  const columnIndex = body.columnIndex != null ? Number(body.columnIndex) : undefined;
+
+  let cell: InspectCell | undefined;
+  if (explicit) {
+    cell = table.cells.find((c) => c.nodeId === explicit || c.cellNodeId === explicit);
+  }
+  if (!cell && rowIndex != null && columnIndex != null) {
+    cell = table.cells.find((c) => c.row === rowIndex && c.col === columnIndex);
+  }
+  if (!cell) {
     throw new MorphError("TARGET_NOT_FOUND", "No table cell matched rowIndex/columnIndex", {
       detail: {
         tableOrdinal: table.tableOrdinal,
+        tableNodeId: table.tableNodeId,
         rowIndex,
         columnIndex,
         knownCells: table.cells.map((c) => ({ row: c.row, col: c.col, text: c.text.slice(0, 40) })),
       },
     });
   }
-  return { nodeId: cell.nodeId, rowIndex, columnIndex, tableOrdinal: table.tableOrdinal };
+  return {
+    paragraphId: cell.nodeId,
+    cellNodeId: cell.cellNodeId,
+    tableNodeId: table.tableNodeId,
+    tableOrdinal: table.tableOrdinal,
+    rowIndex: cell.row,
+    columnIndex: cell.col,
+    text: cell.text,
+  };
 }
 
 export function pickTable(tables: InspectTable[], tableOrdinal: number): InspectTable | undefined {
@@ -55,4 +77,9 @@ export function relativeAt(
       nodeId,
     },
   };
+}
+
+export function rowPosition(position?: string): "above" | "below" {
+  if (position === "before" || position === "above") return "above";
+  return "below";
 }
