@@ -43,7 +43,8 @@ export function capacityReport(host: {
       rssMb: Math.round(memory.treeRssMb),
       hostRssMb: Math.round(memory.hostRssMb),
       engineRssMb: Math.round(memory.engineRssMb),
-      guardSeesEngine: true,
+      // Derived, not asserted: a tree read below the host read means rssOf failed.
+      guardSeesEngine: memory.treeRssMb >= memory.hostRssMb,
       reserveMb: MEASURED.reserveMb,
     },
     documents: {

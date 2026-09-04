@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asReceipt, assertReceipt } from "../src/documents/receipts.js";
+import { asReceipt, assertReceipt, shouldDiscardHandle } from "../src/documents/receipts.js";
 import { MorphError } from "../src/errors.js";
 
 test("unwraps nested engine receipt", () => {
@@ -35,4 +35,23 @@ test("failed nested receipt is not success", () => {
     assert.equal(err.status, 400);
     return true;
   });
+});
+
+test("clean 400s keep the warm handle; engine failures discard it", () => {
+  for (const code of [
+    "NO_MATCH",
+    "AMBIGUOUS_MATCH",
+    "PRECONDITION_FAILED",
+    "VALIDATION",
+    "OFFSET_FORBIDDEN",
+    "CAPABILITY_UNAVAILABLE",
+  ] as const) {
+    assert.equal(
+      shouldDiscardHandle(new MorphError(code, code)),
+      false,
+      `${code} must not cost an engine boot`,
+    );
+  }
+  assert.equal(shouldDiscardHandle(new MorphError("ENGINE_FAILURE", "boom")), true);
+  assert.equal(shouldDiscardHandle(new Error("unexpected throw")), true);
 });

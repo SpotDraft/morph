@@ -46,6 +46,16 @@ export function isRetryable(err: unknown): err is MorphError {
   return err instanceof MorphError && STALE_RETRY_CODES.has(err.code as FailureCode);
 }
 
+/**
+ * Only drop the warm handle when the engine may be in an unknown state.
+ * A typed 400 (NO_MATCH, AMBIGUOUS_MATCH, PRECONDITION_FAILED, VALIDATION, …)
+ * mutated nothing, so discarding it costs a full engine boot for free.
+ */
+export function shouldDiscardHandle(err: unknown): boolean {
+  if (err instanceof MorphError) return err.code === "ENGINE_FAILURE";
+  return true;
+}
+
 export function revisionOf(doc: { openResult?: { document?: { revision?: number } } }, fallback?: unknown): string | number | null {
   const fromOpen = doc.openResult?.document?.revision;
   if (fromOpen != null) return fromOpen;

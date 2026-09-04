@@ -9,7 +9,7 @@ import { getPersistence, type Persistence } from "../persistence/store.js";
 import type { AccessMode, ReceiptLike, SessionMeta, UserInfo } from "../types.js";
 import { buildCollaborationUrl, type RequestProto } from "../http/public-url.js";
 import { noteFirstOpen } from "../services/analytics.js";
-import { asReceipt, assertReceipt, isRetryable, revisionOf } from "./receipts.js";
+import { asReceipt, assertReceipt, isRetryable, revisionOf, shouldDiscardHandle } from "./receipts.js";
 
 export interface CreateSessionInput {
   sessionId: string;
@@ -128,7 +128,7 @@ export class DocumentRegistry {
         result = await runOnce(active, meta);
       } catch (err) {
         if (!isRetryable(err)) {
-          await this.host.closeHandle(sessionId);
+          if (shouldDiscardHandle(err)) await this.host.closeHandle(sessionId);
           throw err;
         }
         await this.host.closeHandle(sessionId);
@@ -142,7 +142,7 @@ export class DocumentRegistry {
         try {
           result = await runOnce(active, rec.meta);
         } catch (retryErr) {
-          await this.host.closeHandle(sessionId);
+          if (shouldDiscardHandle(retryErr)) await this.host.closeHandle(sessionId);
           throw retryErr;
         }
       }

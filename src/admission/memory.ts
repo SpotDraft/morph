@@ -16,7 +16,13 @@ function rssOf(pid: number): number {
   try {
     const status = readFileSync(`/proc/${pid}/status`, "utf8");
     const match = status.match(/VmRSS:\s+(\d+)\s+kB/);
-    return match ? Number(match[1]) / 1024 : 0;
+    if (match) return Number(match[1]) / 1024;
+  } catch {
+    // No /proc (darwin, and any non-Linux CI). Fall through to ps.
+  }
+  try {
+    const out = spawnSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" });
+    return Number((out.stdout || "").trim()) / 1024 || 0;
   } catch {
     return 0;
   }
