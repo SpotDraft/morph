@@ -15,7 +15,10 @@ export async function collaborationRoutes(app: FastifyInstance) {
       sessionId: meta.sessionId,
       accessMode: meta.accessMode,
       roomId: meta.roomId,
-      collaborationUrl: getRegistry().collaborationUrl(meta.sessionId, request.headers.host),
+      collaborationUrl: getRegistry().collaborationUrl(meta.sessionId, {
+        host: request.headers.host,
+        proto: String(request.headers["x-forwarded-proto"] || request.protocol || ""),
+      }),
     };
   });
 

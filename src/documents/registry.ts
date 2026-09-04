@@ -8,6 +8,7 @@ import { MorphError } from "../errors.js";
 import { getHost, type SdkHost } from "../hosts/sdk-host.js";
 import { getPersistence, type Persistence } from "../persistence/store.js";
 import type { AccessMode, ReceiptLike, SessionMeta, UserInfo } from "../types.js";
+import { buildCollaborationUrl, type RequestProto } from "../http/public-url.js";
 import { noteFirstOpen } from "../services/analytics.js";
 import { asReceipt, assertReceipt, isRetryable, revisionOf } from "./receipts.js";
 
@@ -186,12 +187,11 @@ export class DocumentRegistry {
     return rec.meta;
   }
 
-  collaborationUrl(sessionId: string, hostHeader?: string): string {
-    const base =
-      process.env.MORPH_PUBLIC_BASE_URL ||
-      (hostHeader ? `ws://${hostHeader}` : `ws://127.0.0.1:${process.env.PORT || "5006"}`);
-    const ws = base.replace(/^http/, "ws");
-    return `${ws.replace(/\/$/, "")}/collaboration/${sessionId}`;
+  collaborationUrl(sessionId: string, request?: RequestProto | string): string {
+    if (typeof request === "string") {
+      return buildCollaborationUrl(sessionId, { host: request });
+    }
+    return buildCollaborationUrl(sessionId, request);
   }
 }
 

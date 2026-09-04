@@ -32,8 +32,7 @@ export async function findTerm(doc: SuperDocDocument, term: string) {
     } else if (INLINE_DEF.test(text) && text.includes(normalized)) {
       definitionBlockId ??= block.nodeId;
     }
-    const re = new RegExp(`\\b${escapeRe(normalized)}\\b`, "g");
-    const count = (text.match(re) ?? []).length;
+    const count = countWholeWords(text, normalized);
     if (count > 0) {
       occurrences.push({
         blockId: block.nodeId,
@@ -82,6 +81,28 @@ export async function checkReferences(doc: SuperDocDocument) {
   };
 }
 
-function escapeRe(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function isWordChar(ch: string | undefined): boolean {
+  if (!ch) return false;
+  const code = ch.charCodeAt(0);
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    ch === "_"
+  );
+}
+
+export function countWholeWords(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let from = 0;
+  while (from <= haystack.length) {
+    const index = haystack.indexOf(needle, from);
+    if (index < 0) break;
+    const before = index === 0 ? undefined : haystack[index - 1];
+    const after = haystack[index + needle.length];
+    if (!isWordChar(before) && !isWordChar(after)) count += 1;
+    from = index + Math.max(1, needle.length);
+  }
+  return count;
 }

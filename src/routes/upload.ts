@@ -78,11 +78,13 @@ export async function uploadRoutes(app: FastifyInstance) {
       if (!sessionId) throw new MorphError("VALIDATION", "sessionId is required");
       const user = requireUser(userRaw);
       const meta = await getRegistry().createIsolated({ sessionId, user, fileName, bytes });
-      const host = request.headers.host;
       return reply.send({
         sessionId: meta.sessionId,
         fileName: meta.fileName,
-        collaborationUrl: getRegistry().collaborationUrl(meta.sessionId, host),
+        collaborationUrl: getRegistry().collaborationUrl(meta.sessionId, {
+          host: request.headers.host,
+          proto: String(request.headers["x-forwarded-proto"] || request.protocol || ""),
+        }),
         user,
         accessMode: meta.accessMode,
         capabilities: meta.capabilities,
