@@ -1,0 +1,30 @@
+{
+  "name": "morph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Document-engine command host — SuperDoc Document API over HTTP",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --import tsx src/server.ts",
+    "dev": "node --import tsx --watch src/server.ts",
+    "test": "SUPERDOC_PUBLIC_LICENSE_KEY=${SUPERDOC_PUBLIC_LICENSE_KEY:-morph-test-license} node --import tsx --test tests/**/*.test.ts",
+    "spike": "node --import tsx scripts/spike.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/websocket": "^11.2.0",
+    "@hocuspocus/server": "^2.15.3",
+    "@superdoc/sdk": "^2.8.0",
+    "fastify": "^5.8.5",
+    "ioredis": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.6",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.3"
+  }
+}
