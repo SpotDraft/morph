@@ -1,6 +1,6 @@
 # morph
 
-Document-engine command host for SuperDoc. Everything for the new writer lives in this folder.
+Document-engine command host for SuperDoc. This repo is the v2 writer; the v1 JSDOM service lives in [SpotDraft/superdoc](https://github.com/SpotDraft/superdoc).
 
 ```text
 agent HTTP → documents/ → @superdoc/sdk 2.8.0 → Document Engine process → last-good DOCX
@@ -9,7 +9,6 @@ agent HTTP → documents/ → @superdoc/sdk 2.8.0 → Document Engine process �
 ## Run
 
 ```bash
-cd morph
 nvm use 20
 export SUPERDOC_PUBLIC_LICENSE_KEY=...
 npm start          # PORT=5006
@@ -68,6 +67,6 @@ Same idea as today's service, cleaner keys:
 
 ## Collaboration
 
-Isolated agent edits do **not** go through Hocuspocus. `collaborationUrl` is advertised; v2 rooms are **not** created until `promoteToShared` and the sidebar SuperDoc v2 ship together. Do not judge collaboration performance from this host yet — the v1 rooms in root `collaboration/` are still the human path.
+Isolated agent edits do **not** go through Hocuspocus. `collaborationUrl` is advertised; v2 rooms are **not** created until `promoteToShared` and the sidebar SuperDoc v2 ship together. Do not judge collaboration performance from this host yet — the v1 rooms in [superdoc](https://github.com/SpotDraft/superdoc) `collaboration/` are still the human path.
 
-Architecture: `../docs/architecture/architecture-superdoc-redesign-2026-09-03/`. This folder is not the Cloud Run entrypoint yet.
+Architecture: [`docs/architecture/architecture-superdoc-redesign-2026-09-03/`](./docs/architecture/architecture-superdoc-redesign-2026-09-03/). This repo is not the Cloud Run entrypoint yet.

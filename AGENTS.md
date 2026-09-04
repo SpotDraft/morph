@@ -2,7 +2,7 @@
 
 ## Scope
 
-`morph/` is the Document-engine command host. SuperDoc's Document API (via `@superdoc/sdk` 2.8.0) is the only writer. HTTP, Redis/file persistence, and admission are adapters.
+This repo is the Document-engine command host. SuperDoc's Document API (via `@superdoc/sdk` 2.8.0) is the only writer. HTTP, Redis/file persistence, and admission are adapters.
 
 ## Read First
 
@@ -11,7 +11,7 @@
 - `src/documents/registry.ts`
 - `src/hosts/sdk-host.ts`
 - `src/services/analytics.ts`
-- `../docs/architecture/architecture-superdoc-redesign-2026-09-03/ARCHITECTURE-SPINE.md`
+- `docs/architecture/architecture-superdoc-redesign-2026-09-03/ARCHITECTURE-SPINE.md`
 
 ## Watchpoints
 

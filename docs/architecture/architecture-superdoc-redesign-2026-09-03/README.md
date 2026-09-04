@@ -12,4 +12,4 @@ Initiative-altitude redesign of this service around SuperDoc's Document API.
 
 Historical sources (repo root): `document_editor_redesign.md`, `document-editor-redesign-spec.md`, `document_editor_plan.txt`, `lld-phase-1-structural-editing.md`, `lld-phase-2-runtime-memory.md`, `lld-phase-3-consistency-ripple.md`.
 
-Implementation of the isolated writer lives in `morph/` (same repo, self-contained package). Root `server.ts` is still the v1 JSDOM service.
+Implementation of the isolated writer is this repo. `server.ts` in [SpotDraft/superdoc](https://github.com/SpotDraft/superdoc) is still the v1 JSDOM service.

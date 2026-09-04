@@ -73,7 +73,7 @@ Set `MEMORY_GUARD_RSS_MB=2048` to enforce the 2 GiB ceiling. `MORPH_MAX_WARM_HAN
 
 ## Collaboration
 
-Isolated agent edits **do not go through Hocuspocus**. `collaborationUrl` is advertised; v2 rooms are **not** created until `promoteToShared` and the sidebar SuperDoc v2 ship together. Do not judge collaboration performance from morph. Root v1 rooms remain the human path.
+Isolated agent edits **do not go through Hocuspocus**. `collaborationUrl` is advertised; v2 rooms are **not** created until `promoteToShared` and the sidebar SuperDoc v2 ship together. Do not judge collaboration performance from morph. The v1 rooms in [superdoc](https://github.com/SpotDraft/superdoc) remain the human path.
 
 ## Word surface
 
