@@ -4,6 +4,7 @@ Initiative-altitude redesign of this service around SuperDoc's Document API.
 
 | File | Role |
 | --- | --- |
+| [IMPLEMENTATION-HANDOFF.md](./IMPLEMENTATION-HANDOFF.md) | Briefing for the implementation chat: aim, waves, parallel sub-agents, testable outcome |
 | [ARCHITECTURE-SPINE.md](./ARCHITECTURE-SPINE.md) | Binding consistency contract (AD-1–AD-28) |
 | [ARCHITECTURE-REDESIGN.md](./ARCHITECTURE-REDESIGN.md) | Human-facing as-is / to-be / cutover |
 | [.memlog.md](./.memlog.md) | Append-only decision log for this run |
