@@ -1,3 +1,5 @@
+import { nextActionFor } from "./agent/failures.js";
+
 export type FailureCode =
   | "SESSION_EXPIRED"
   | "MISSING_USER"
@@ -22,7 +24,8 @@ export type FailureCode =
   | "ENGINE_FAILURE"
   | "PERSIST_FAILED"
   | "ADMISSION"
-  | "ENCRYPTED_DOC";
+  | "ENCRYPTED_DOC"
+  | "UNKNOWN_ROUTE";
 
 export class MorphError extends Error {
   readonly code: FailureCode;
@@ -55,6 +58,7 @@ export class MorphError extends Error {
 }
 
 export function httpErrorBody(err: MorphError) {
+  const retryable = err.status === 503 || err.status === 429;
   return {
     success: false,
     ok: false,
@@ -62,6 +66,9 @@ export function httpErrorBody(err: MorphError) {
     error: err.message,
     message: err.message,
     detail: err.detail,
+    retryable,
+    retryAfter: err.retryAfter ?? (retryable ? 10 : undefined),
+    nextAction: nextActionFor(err.code),
   };
 }
 
@@ -73,8 +80,11 @@ export function mapEngineCode(code: string | undefined): FailureCode {
     case "TARGET_NOT_FOUND":
     case "NO_OP":
     case "CAPABILITY_UNAVAILABLE":
+      return code;
     case "TRACK_CHANGE_COMMAND_UNAVAILABLE":
-      return code === "TRACK_CHANGE_COMMAND_UNAVAILABLE" ? "CAPABILITY_UNAVAILABLE" : code;
+    case "CAPABILITY_UNSUPPORTED":
+    case "COMMAND_UNAVAILABLE":
+      return "CAPABILITY_UNAVAILABLE";
     case "MATCH_NOT_FOUND":
       return "NO_MATCH";
     case "AMBIGUOUS_TARGET":

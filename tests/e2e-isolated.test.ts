@@ -21,6 +21,8 @@ test("health", async () => {
   const res = await boot.app.inject({ method: "GET", url: "/health" });
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().service, "morph");
+  assert.equal(res.json().persist, "memory");
+  assert.equal(res.json().collaboration.v2Rooms, false);
 });
 
 test("upload requires a real user", async () => {
@@ -346,4 +348,135 @@ test("find-term and check-references answer without dumping an index", async () 
   });
   assert.equal(refs.statusCode, 200, refs.body);
   assert.ok(Array.isArray(refs.json().broken));
+});
+
+test("inspect and tools give the agent addresses without a full dump", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const tools = await boot.app.inject({ method: "GET", url: "/document/tools" });
+  assert.equal(tools.statusCode, 200);
+  assert.ok(tools.json().tools.some((t: { id: string }) => t.id === "inspect"));
+  const inspect = await boot.app.inject({
+    method: "POST",
+    url: "/document/inspect",
+    payload: { sessionId },
+  });
+  assert.equal(inspect.statusCode, 200, inspect.body);
+  const body = inspect.json();
+  assert.ok(body.blocks.length >= 3);
+  assert.ok(Array.isArray(body.tables));
+  assert.ok(body.tables[0]?.cells?.some((c: { text: string }) => c.text.includes("Net 30")));
+  assert.match(String(body.targeting), /Never from\/to/);
+});
+
+test("table cell and format tools edit through the engine", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const cell = await boot.app.inject({
+    method: "POST",
+    url: "/document/table/cell",
+    payload: { sessionId, rowIndex: 0, columnIndex: 1, text: "Net 45" },
+  });
+  assert.equal(cell.statusCode, 200, cell.body);
+  const formatted = await boot.app.inject({
+    method: "POST",
+    url: "/document/format",
+    payload: { sessionId, mark: "bold", pattern: "Confidential Information" },
+  });
+  assert.equal(formatted.statusCode, 200, formatted.body);
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  assert.match(String(content.json().text || ""), /Net 45/);
+});
+
+test("unknown route is 400 UNKNOWN_ROUTE, never a session 404", async () => {
+  const res = await boot.app.inject({ method: "POST", url: "/document/not-a-real-tool", payload: { sessionId: "x" } });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().code, "UNKNOWN_ROUTE");
+  assert.equal(res.json().retryable, false);
+  assert.match(String(res.json().nextAction), /\/document\/tools/);
+});
+
+test("capacity reports 2 GiB warm-doc and write-slot guidance", async () => {
+  const res = await boot.app.inject({ method: "GET", url: "/document/capacity" });
+  assert.equal(res.statusCode, 200, res.body);
+  const body = res.json();
+  assert.equal(body.budget.assumedMb, 2048);
+  assert.ok(body.documents.maxWarmAt2GiB.conservative >= 80);
+  assert.ok(body.requests.maxConcurrentWrites >= 1);
+  assert.equal(body.persist.sessionful, true);
+  assert.equal(body.collaboration.v2Rooms, false);
+});
+
+test("missing table cell is TARGET_NOT_FOUND with nextAction, not a 500", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const res = await boot.app.inject({
+    method: "POST",
+    url: "/document/table/cell",
+    payload: { sessionId, rowIndex: 99, columnIndex: 99, text: "nope" },
+  });
+  assert.equal(res.statusCode, 400, res.body);
+  assert.equal(res.json().code, "TARGET_NOT_FOUND");
+  assert.match(String(res.json().nextAction), /inspect/i);
+});
+
+test("heading and list insert use structural anchors", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const inspect = await boot.app.inject({ method: "POST", url: "/document/inspect", payload: { sessionId } });
+  assert.equal(inspect.statusCode, 200, inspect.body);
+  const heading = inspect.json().headings?.[0] ?? inspect.json().blocks.find((b: { type?: string }) => b.type === "heading");
+  assert.ok(heading?.nodeId);
+  const made = await boot.app.inject({
+    method: "POST",
+    url: "/document/heading",
+    payload: { sessionId, position: "after", anchorId: heading.nodeId, level: 1, content: "Payment Terms" },
+  });
+  assert.equal(made.statusCode, 200, made.body);
+
+  const listAnchor =
+    inspect.json().lists?.[0]?.nodeId ??
+    inspect.json().blocks.find((b: { role?: string }) => b.role === "listItem")?.nodeId;
+  if (listAnchor) {
+    const listed = await boot.app.inject({
+      method: "POST",
+      url: "/document/list/insert",
+      payload: { sessionId, anchorId: listAnchor, position: "after", content: "Cure period of ten (10) days." },
+    });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.notEqual(listed.json().code, "ENGINE_FAILURE");
+  }
+
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  assert.match(String(content.json().text || ""), /Payment Terms/);
+});
+
+test("concurrent replaces on separate sessions all persist", async () => {
+  const ids = await Promise.all(
+    Array.from({ length: 4 }, async (_, i) => {
+      const sessionId = `sess-conc-${i}-${randomUUID()}`;
+      assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+      return sessionId;
+    }),
+  );
+  const results = await Promise.all(
+    ids.map((sessionId) =>
+      boot.app.inject({
+        method: "POST",
+        url: "/document/replace",
+        payload: { sessionId, oldText: "one (1) year", newText: "two (2) years", caseSensitive: true },
+      }),
+    ),
+  );
+  for (const res of results) {
+    assert.equal(res.statusCode, 200, res.body);
+    assert.notEqual(res.json().success, false);
+  }
+  const texts = await Promise.all(
+    ids.map(async (sessionId) => {
+      const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+      return String(content.json().text || "");
+    }),
+  );
+  for (const text of texts) assert.match(text, /two \(2\) years/);
 });

@@ -3,7 +3,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { SuperDocDocument } from "@superdoc/sdk";
-import { admitOrThrow } from "../admission/memory.js";
 import { MorphError } from "../errors.js";
 import { getHost, type SdkHost } from "../hosts/sdk-host.js";
 import { getPersistence, type Persistence } from "../persistence/store.js";
@@ -39,7 +38,10 @@ export class DocumentRegistry {
   }
 
   async createIsolated(input: CreateSessionInput): Promise<SessionMeta> {
-    admitOrThrow("upload");
+    return this.host.withWriteSlot("upload", () => this.createIsolatedUnlocked(input));
+  }
+
+  private async createIsolatedUnlocked(input: CreateSessionInput): Promise<SessionMeta> {
     if (!input.user.userid || input.user.userid === "anonymous" || !input.user.username) {
       throw new MorphError("MISSING_USER", "userid and username are required", { status: 400 });
     }
@@ -104,7 +106,14 @@ export class DocumentRegistry {
     operation: string,
     run: (doc: SuperDocDocument, meta: SessionMeta) => Promise<T>,
   ): Promise<T> {
-    admitOrThrow(operation);
+    return this.host.withWriteSlot(operation, () => this.mutateUnlocked(sessionId, operation, run));
+  }
+
+  private async mutateUnlocked<T extends ReceiptLike | Record<string, unknown>>(
+    sessionId: string,
+    operation: string,
+    run: (doc: SuperDocDocument, meta: SessionMeta) => Promise<T>,
+  ): Promise<T> {
     return this.withDoc(sessionId, async (doc, meta) => {
       let active = doc;
       const runOnce = async (handle: SuperDocDocument, sessionMeta: SessionMeta) => {
@@ -159,11 +168,12 @@ export class DocumentRegistry {
   }
 
   async exportArtifact(sessionId: string): Promise<{ bytes: Buffer; fileName: string }> {
-    admitOrThrow("export");
-    return this.withDoc(sessionId, async (doc, meta) => {
-      const bytes = await this.exportBytes(doc, sessionId, "artifact");
-      return { bytes, fileName: meta.fileName };
-    });
+    return this.host.withWriteSlot("export", () =>
+      this.withDoc(sessionId, async (doc, meta) => {
+        const bytes = await this.exportBytes(doc, sessionId, "artifact");
+        return { bytes, fileName: meta.fileName };
+      }),
+    );
   }
 
   async deleteSession(sessionId: string): Promise<void> {

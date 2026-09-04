@@ -160,13 +160,16 @@ export async function documentRoutes(app: FastifyInstance) {
           throw new MorphError("INVALID_ANCHOR", "anchorId is required for relative insert");
         }
         if (body.asListItem) {
+          if ((kind === "before" || kind === "after") && !anchorId) {
+            throw new MorphError("INVALID_ANCHOR", "anchorId is required to insert a list item");
+          }
           const receipt = await doc.lists.insert({
-            at,
+            target: { kind: "block", nodeType: "listItem", nodeId: anchorId },
+            position: kind === "before" ? "before" : "after",
             text: String(body.content ?? body.text ?? ""),
             changeMode: "tracked",
             expectedRevision: body.expectedRevision as string | undefined,
-            level: body.level as number | undefined,
-          } as never);
+          });
           return asReceipt("lists.insert", receipt);
         }
         const receipt = await doc.create.paragraph({

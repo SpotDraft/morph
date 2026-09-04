@@ -17,22 +17,24 @@ export function sessionIdOf(request: FastifyRequest): string {
   return id;
 }
 
-export async function sendError(reply: FastifyReply, err: unknown) {
-  const mapped = err instanceof MorphError ? err : fromEngineError(err);
-  if (mapped) {
-    if (mapped.retryAfter) reply.header("Retry-After", String(mapped.retryAfter));
-    for (const [k, v] of Object.entries(memoryHeaders())) reply.header(k, v);
-    return reply.code(mapped.status).send(httpErrorBody(mapped));
+export function fromUnknown(err: unknown): MorphError {
+  if (err instanceof MorphError) return err;
+  const engine = fromEngineError(err);
+  if (engine) return engine;
+  const rec = err as { code?: string; statusCode?: number; message?: string; validation?: unknown };
+  if (rec?.code === "FST_ERR_CTP_INVALID_JSON" || rec?.validation || rec?.code === "FST_ERR_VALIDATION") {
+    return new MorphError("VALIDATION", rec.message || "Invalid request", {
+      detail: { fastify: rec.code, validation: rec.validation ?? null },
+    });
   }
-  const message = err instanceof Error ? err.message : String(err);
-  return reply.code(500).send({
-    success: false,
-    ok: false,
-    code: "ENGINE_FAILURE",
-    error: message,
-    message,
-    detail: {},
-  });
+  return new MorphError("ENGINE_FAILURE", rec?.message || String(err), { status: 503, retryAfter: 10 });
+}
+
+export async function sendError(reply: FastifyReply, err: unknown) {
+  const mapped = fromUnknown(err);
+  if (mapped.retryAfter) reply.header("Retry-After", String(mapped.retryAfter));
+  for (const [k, v] of Object.entries(memoryHeaders())) reply.header(k, v);
+  return reply.code(mapped.status).send(httpErrorBody(mapped));
 }
 
 export function wrap(

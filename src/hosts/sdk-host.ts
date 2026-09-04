@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SuperDocClient, type SuperDocDocument } from "@superdoc/sdk";
-import { handleIdleMs, superdocLicenseKey, workerSlots } from "../config/env.js";
+import { handleIdleMs, maxWarmHandles, superdocLicenseKey, workerSlots } from "../config/env.js";
 import { MorphError } from "../errors.js";
 import type { UserInfo } from "../types.js";
 import { admitOrThrow } from "../admission/memory.js";
@@ -24,6 +24,7 @@ export class SdkHost {
   private connecting: Promise<SuperDocClient> | null = null;
   private readonly warm = new Map<string, WarmHandle>();
   private openCount = 0;
+  private inFlight = 0;
   private idleTimer: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -34,7 +35,28 @@ export class SdkHost {
   }
 
   slotsAvailable(): boolean {
-    return this.openCount < workerSlots();
+    return this.inFlight < workerSlots();
+  }
+
+  warmAvailable(): boolean {
+    return this.warm.size < maxWarmHandles();
+  }
+
+  async withWriteSlot<T>(op: string, fn: () => Promise<T>): Promise<T> {
+    admitOrThrow(op);
+    if (!this.slotsAvailable()) {
+      throw new MorphError("ADMISSION", `No write slots for ${op}`, {
+        status: 503,
+        retryAfter: 5,
+        detail: { slots: workerSlots(), inFlight: this.inFlight },
+      });
+    }
+    this.inFlight += 1;
+    try {
+      return await fn();
+    } finally {
+      this.inFlight = Math.max(0, this.inFlight - 1);
+    }
   }
 
   async getClient(): Promise<SuperDocClient> {
@@ -64,21 +86,21 @@ export class SdkHost {
   }
 
   async openIsolated(opts: OpenHandleOptions): Promise<SuperDocDocument> {
-    admitOrThrow("open");
-    if (!this.slotsAvailable()) {
-      await this.reapOldest();
-    }
-    if (!this.slotsAvailable()) {
-      throw new MorphError("ADMISSION", "No engine worker slots", {
-        status: 503,
-        retryAfter: 10,
-        detail: { slots: workerSlots(), open: this.openCount },
-      });
-    }
     const existing = this.warm.get(opts.sessionId);
     if (existing) {
       existing.lastUsed = Date.now();
       return existing.doc;
+    }
+    admitOrThrow("open");
+    if (!this.warmAvailable()) {
+      await this.reapOldest();
+    }
+    if (!this.warmAvailable()) {
+      throw new MorphError("ADMISSION", "Warm-handle budget is full", {
+        status: 503,
+        retryAfter: 10,
+        detail: { maxWarm: maxWarmHandles(), warm: this.warm.size },
+      });
     }
 
     const client = await this.getClient();
@@ -104,7 +126,7 @@ export class SdkHost {
     if (h) h.lastUsed = Date.now();
   }
 
-  async closeHandle(sessionId: string, discard = true): Promise<void> {
+  async closeHandle(sessionId: string, discard = true, recycleWhenEmpty = true): Promise<void> {
     const h = this.warm.get(sessionId);
     if (!h) return;
     this.warm.delete(sessionId);
@@ -114,6 +136,30 @@ export class SdkHost {
     } catch {
       // best-effort
     }
+    if (recycleWhenEmpty && this.warm.size === 0) {
+      await this.recycleEngine();
+    }
+  }
+
+  stats() {
+    return {
+      warmHandles: this.warm.size,
+      openCount: this.openCount,
+      slots: workerSlots(),
+      maxWarm: maxWarmHandles(),
+      inFlight: this.inFlight,
+      engineConnected: this.client != null,
+    };
+  }
+
+  private async recycleEngine(): Promise<void> {
+    if (!this.client) return;
+    try {
+      await this.client.dispose();
+    } catch {
+      // best-effort
+    }
+    this.client = null;
   }
 
   async saveDistinct(doc: SuperDocDocument, outPath: string): Promise<void> {
@@ -130,15 +176,8 @@ export class SdkHost {
   async dispose(): Promise<void> {
     if (this.idleTimer) clearInterval(this.idleTimer);
     const ids = [...this.warm.keys()];
-    await Promise.all(ids.map((id) => this.closeHandle(id)));
-    if (this.client) {
-      try {
-        await this.client.dispose();
-      } catch {
-        // best-effort
-      }
-      this.client = null;
-    }
+    await Promise.all(ids.map((id) => this.closeHandle(id, true, false)));
+    await this.recycleEngine();
   }
 
   private async reapIdle(): Promise<void> {

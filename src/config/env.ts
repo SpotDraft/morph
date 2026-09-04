@@ -16,6 +16,11 @@ export function workerSlots(): number {
   return intEnv("MORPH_WORKER_SLOTS", "8");
 }
 
+/** Cached open documents. Distinct from write slots — a warm handle is idle memory, not a request. */
+export function maxWarmHandles(): number {
+  return intEnv("MORPH_MAX_WARM_HANDLES", String(Math.max(workerSlots() * 8, 32)));
+}
+
 export const HANDLE_IDLE_MS = handleIdleMs();
 export const WORKER_SLOTS = workerSlots();
 export const PUBLIC_BASE_URL = process.env.MORPH_PUBLIC_BASE_URL || "";

@@ -9,3 +9,4 @@ Binding architecture for the Document-engine command host. Implementation of iso
 - `ARCHITECTURE-SPINE.md` (AD-1–AD-28)
 - `IMPLEMENTATION-HANDOFF.md`
 - `../../morph/AGENTS.md`
+- `../../morph/AGENT.md` (agent loop, 2 GiB capacity, Redis/hydration, typed failures)

@@ -4,7 +4,10 @@ import Redis from "ioredis";
 import { DATA_DIR, REDIS_URI, SESSION_TTL_SECONDS } from "../config/env.js";
 import type { PersistRecord, SessionMeta } from "../types.js";
 
+export type PersistKind = "memory" | "file" | "redis";
+
 export interface Persistence {
+  readonly kind: PersistKind;
   save(record: PersistRecord): Promise<void>;
   load(sessionId: string): Promise<PersistRecord | null>;
   exists(sessionId: string): Promise<boolean>;
@@ -19,6 +22,7 @@ const KEY = {
 };
 
 export class MemoryPersistence implements Persistence {
+  readonly kind = "memory" as const;
   private readonly records = new Map<string, PersistRecord>();
 
   async save(record: PersistRecord): Promise<void> {
@@ -51,6 +55,7 @@ export class MemoryPersistence implements Persistence {
 }
 
 export class FilePersistence implements Persistence {
+  readonly kind = "file" as const;
   constructor(private readonly root: string) {}
 
   private dir(sessionId: string) {
@@ -96,6 +101,7 @@ export class FilePersistence implements Persistence {
 }
 
 export class RedisPersistence implements Persistence {
+  readonly kind = "redis" as const;
   private readonly redis: Redis;
 
   constructor(uri: string) {
@@ -174,4 +180,8 @@ export function getPersistence(): Persistence {
 
 export function setPersistence(store: Persistence): void {
   singleton = store;
+}
+
+export function persistKind(): PersistKind {
+  return getPersistence().kind;
 }

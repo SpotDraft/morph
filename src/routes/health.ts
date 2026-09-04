@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import { capacityReport } from "../admission/capacity.js";
 import { rssMb } from "../admission/memory.js";
-import { memoryLimitMb } from "../config/env.js";
+import { memoryLimitMb, workerSlots } from "../config/env.js";
 import { getRegistry } from "../documents/registry.js";
+import { getHost } from "../hosts/sdk-host.js";
+import { persistKind } from "../persistence/store.js";
 import { MorphError } from "../errors.js";
 import { wrap } from "./helpers.js";
 
@@ -12,6 +15,15 @@ export async function healthRoutes(app: FastifyInstance) {
     uptime: process.uptime(),
     rssMb: Math.round(rssMb()),
     memoryLimitMb: memoryLimitMb(),
+    persist: persistKind(),
+    host: getHost().stats(),
+    workerSlots: workerSlots(),
+    capacity: capacityReport(getHost().stats()),
+    collaboration: {
+      isolated: true,
+      v2Rooms: false,
+      note: "v2 rooms are not created until promoteToShared + sidebar SuperDoc v2",
+    },
   }));
 
   app.get(

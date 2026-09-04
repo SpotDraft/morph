@@ -16,6 +16,17 @@ test("engine codes map to host codes", () => {
   assert.equal(mapEngineCode("MATCH_NOT_FOUND"), "NO_MATCH");
   assert.equal(mapEngineCode("REVISION_MISMATCH"), "REVISION_MISMATCH");
   assert.equal(mapEngineCode("AMBIGUOUS_TARGET"), "AMBIGUOUS_MATCH");
+  assert.equal(mapEngineCode("CAPABILITY_UNSUPPORTED"), "CAPABILITY_UNAVAILABLE");
+});
+
+test("agent errors carry nextAction and never look like a bare 500", () => {
+  const body = httpErrorBody(new MorphError("NO_MATCH", "No match for Term"));
+  assert.equal(body.code, "NO_MATCH");
+  assert.equal(body.retryable, false);
+  assert.match(String(body.nextAction), /inspect|query/i);
+  const unknown = httpErrorBody(new MorphError("UNKNOWN_ROUTE", "Unknown route POST /nope"));
+  assert.equal(unknown.retryable, false);
+  assert.match(String(unknown.nextAction), /\/document\/tools/);
 });
 
 test("memory guard is 503 with Retry-After semantics", () => {

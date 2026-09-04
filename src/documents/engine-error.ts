@@ -12,8 +12,17 @@ export function fromEngineError(err: unknown): MorphError | null {
   if (/zero nodes|no match|MATCH_NOT_FOUND|matched zero/i.test(message) || code === "MATCH_NOT_FOUND") {
     return new MorphError("NO_MATCH", message, { detail: { engineCode: code, details } });
   }
+  if (/requires a target|is required|invalid argument|missing required/i.test(message)) {
+    return new MorphError("VALIDATION", message, { detail: { engineCode: code, details } });
+  }
   if (/ambiguous/i.test(message) || code === "AMBIGUOUS_TARGET") {
     return new MorphError("AMBIGUOUS_MATCH", message, { detail: { engineCode: code, details } });
+  }
+  if (/encrypted|password.?protect/i.test(message)) {
+    return new MorphError("ENCRYPTED_DOC", message, { detail: { engineCode: code, details } });
+  }
+  if (/unavailable|not supported|unsupported|not implemented/i.test(message)) {
+    return new MorphError("CAPABILITY_UNAVAILABLE", message, { detail: { engineCode: code, details } });
   }
   if (code) {
     const mapped = mapEngineCode(code);

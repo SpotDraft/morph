@@ -294,7 +294,7 @@ Seed only. Once code exists, the tree in the repo is the authority.
 
 ## Open Questions
 
-- Measured SDK/engine-process RSS for representative contracts, and how many concurrent warm handles fit the current 8 GiB Cloud Run budget (`NODE_OPTIONS` max-old-space 7680, `MEMORY_GUARD_RSS_MB` 7680).
+- Measured on this image (not yet Chainguard `node-fips:20`): first Ping-MSA open ~610 MB tree RSS, ~11 MB per extra warm doc, 8 concurrent tracked replaces ~875 ms. At 2 GiB with 256 MiB headroom that is ~80–100 warm MSA-sized docs; write concurrency is `MORPH_WORKER_SLOTS` (default 8). Re-measure on the FIPS image before changing the 8 GiB Cloud Run budget (`NODE_OPTIONS` max-old-space 7680, `MEMORY_GUARD_RSS_MB` 7680).
 - angular-frontend SuperDoc v2 ship date, which gates shared-mode and v1 room retirement.
 - Whether upload should keep an immutable `original` DOCX for `reviewMode: original` projections, or whether last-good plus SuperDoc original-view is enough.
 - Whether SuperDoc export already refreshes `REF` / number fields or only emits them dirty (AD-10; old LLD Q-A4).
