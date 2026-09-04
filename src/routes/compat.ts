@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import {
+  applyAtomic,
   applyReplace,
   assertExactlyOne,
   assertExpectedTextOnMatch,
   buildOutline,
+  createComment,
   queryMatch,
   replaceAllSteps,
   resolveNodeType,
@@ -131,7 +133,16 @@ export async function compatRoutes(app: FastifyInstance) {
           ref: item.handle?.ref,
           address: item.address,
         }));
-        const { chosen, excluded, steps } = replaceAllSteps(search, replace, match.items ?? [], excludeIds);
+        const { chosen, excluded, steps } = replaceAllSteps(
+          search,
+          replace,
+          match.items ?? [],
+          excludeIds,
+          {
+            caseSensitive: body.caseSensitive !== false,
+            wholeWord: Boolean(body.wholeWord),
+          },
+        );
         if (steps.length === 0) {
           return {
             ok: true,
@@ -142,12 +153,11 @@ export async function compatRoutes(app: FastifyInstance) {
             replaced: 0,
           };
         }
-        const receipt = await doc.mutations.apply({
-          atomic: true,
+        const receipt = await applyAtomic(doc, {
+          steps,
           expectedRevision: match.evaluatedRevision,
           changeMode: "tracked",
-          steps,
-        } as never);
+        });
         const ok = asReceipt("replace-all", receipt);
         assertReceipt(ok);
         return {
@@ -187,11 +197,10 @@ export async function compatRoutes(app: FastifyInstance) {
           target = match.items[0]?.target;
         }
         if (!target) throw new MorphError("VALIDATION", "target or phrase is required to anchor a comment");
-        const receipt = await doc.comments.create({
+        return createComment(doc, {
           text: String(body.text || body.comment || ""),
-          target: target as never,
-        } as never);
-        return asReceipt("comments.create", receipt);
+          target,
+        });
       });
     }),
   );

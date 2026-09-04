@@ -169,8 +169,35 @@ test("replace-all returns a visible set, not a bare count", async () => {
   assert.equal(res.statusCode, 200, res.body);
   const body = res.json();
   assert.ok(Array.isArray(body.matches));
+  assert.ok(body.matches.length >= 1);
   assert.ok("excluded" in body);
+  assert.ok(body.committed === true || body.replaced >= 1);
   assert.ok(!("count" in body && !body.matches));
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  assert.match(String(content.json().text || ""), /Vendor/);
+});
+
+test("insert-after-paragraph is structural, not a character offset", async () => {
+  const sessionId = `sess-${randomUUID()}`;
+  assert.equal((await uploadFixture(boot.app, sessionId)).statusCode, 200);
+  const structure = await boot.app.inject({
+    method: "POST",
+    url: "/document/structure",
+    payload: { sessionId },
+  });
+  assert.equal(structure.statusCode, 200, structure.body);
+  const bodyPara = structure.json().blocks.find((b: { type?: string; textPreview?: string }) =>
+    String(b.textPreview || "").includes("one (1) year"),
+  );
+  assert.ok(bodyPara?.nodeId);
+  const inserted = await boot.app.inject({
+    method: "POST",
+    url: "/insert-after-paragraph",
+    payload: { sessionId, afterParaId: bodyPara.nodeId, content: "Inserted after term paragraph." },
+  });
+  assert.equal(inserted.statusCode, 200, inserted.body);
+  const content = await boot.app.inject({ method: "POST", url: "/get-content", payload: { sessionId } });
+  assert.match(String(content.json().text || ""), /Inserted after term paragraph/);
 });
 
 test("unknown session is 404, not a content error", async () => {

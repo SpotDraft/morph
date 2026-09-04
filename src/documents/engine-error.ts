@@ -28,3 +28,24 @@ export function fromEngineError(err: unknown): MorphError | null {
 export function rethrowEngine(err: unknown): never {
   throw fromEngineError(err) ?? err;
 }
+
+/** Engine mismatch messages look like: expected-revision sd-… does not match current revision 0 */
+export function currentRevisionFromMismatch(err: unknown): string | undefined {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+  const match = message.match(/current revision\s+([^\s.]+)/i);
+  return match?.[1];
+}
+
+export function isRevisionMismatchError(err: unknown): boolean {
+  const mapped = fromEngineError(err);
+  if (mapped?.code === "REVISION_MISMATCH" || mapped?.code === "STALE_REVISION") return true;
+  if (err instanceof MorphError && (err.code === "REVISION_MISMATCH" || err.code === "STALE_REVISION")) return true;
+  return /REVISION_MISMATCH|STALE_REVISION|does not match current revision/i.test(
+    err instanceof Error ? err.message : String(err),
+  );
+}

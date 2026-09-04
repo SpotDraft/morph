@@ -1,7 +1,13 @@
 import type { SuperDocDocument } from "@superdoc/sdk";
 import { MorphError } from "../errors.js";
-import { rethrowEngine } from "./engine-error.js";
+import {
+  currentRevisionFromMismatch,
+  fromEngineError,
+  isRevisionMismatchError,
+  rethrowEngine,
+} from "./engine-error.js";
 import { asReceipt } from "./receipts.js";
+import type { ReceiptLike } from "../types.js";
 
 export interface QueryInput {
   pattern?: string;
@@ -201,39 +207,90 @@ export async function assertExpectedTextOnMatch(
   assertExpectedText(haystack, expected);
 }
 
-function isRevisionMismatch(receipt: { success: boolean; failure?: { code?: string } }) {
+function isFailedRevisionReceipt(receipt: { success: boolean; failure?: { code?: string } }) {
   const code = receipt.failure?.code;
   return !receipt.success && (code === "REVISION_MISMATCH" || code === "STALE_REVISION");
+}
+
+export async function withRevisionRetry<T>(
+  doc: SuperDocDocument,
+  preferred: string | number | undefined,
+  run: (expectedRevision: string | number) => Promise<T>,
+): Promise<T> {
+  const live = await currentRevision(doc);
+  const firstRev = preferred ?? live;
+  const fallbacks: Array<string | number> = [firstRev];
+  if (String(live) !== String(firstRev)) fallbacks.push(live);
+  const opened = doc.openResult?.document?.revision;
+  if (opened != null && !fallbacks.some((r) => String(r) === String(opened))) fallbacks.push(opened);
+  if (!fallbacks.some((r) => String(r) === "0")) fallbacks.push(0);
+
+  let lastErr: unknown;
+  for (const rev of fallbacks) {
+    try {
+      const raw = await run(rev);
+      const receipt = asReceipt("mutate", raw, rev);
+      if (isFailedRevisionReceipt(receipt)) {
+        lastErr = new MorphError("REVISION_MISMATCH", receipt.failure?.message || "revision mismatch");
+        continue;
+      }
+      return raw;
+    } catch (err) {
+      if (!isRevisionMismatchError(err)) throw fromEngineError(err) ?? err;
+      const hinted = currentRevisionFromMismatch(err);
+      lastErr = err;
+      if (hinted && !fallbacks.some((r) => String(r) === hinted)) {
+        fallbacks.push(hinted);
+      }
+    }
+  }
+  throw fromEngineError(lastErr) ?? lastErr;
 }
 
 export async function applyReplace(
   doc: SuperDocDocument,
   args: { target?: unknown; ref?: string; text: string; expectedRevision?: string | number },
 ) {
-  const live = await currentRevision(doc);
-  const attempt = (expectedRevision?: string | number) =>
+  return withRevisionRetry(doc, args.expectedRevision, (expectedRevision) =>
     doc.replace({
       target: args.target as never,
       ref: args.ref,
       text: args.text,
-      expectedRevision: expectedRevision != null ? String(expectedRevision) : undefined,
+      expectedRevision: String(expectedRevision),
       changeMode: "tracked",
-    } as never);
+    } as never),
+  );
+}
 
-  const firstRev = args.expectedRevision ?? live;
-  const first = await attempt(firstRev);
-  const receipt = asReceipt("replace", first, firstRev);
-  if (isRevisionMismatch(receipt)) {
-    const secondRev =
-      String(live) !== String(firstRev) ? live : (doc.openResult?.document?.revision ?? 0);
-    const second = await attempt(secondRev);
-    const secondReceipt = asReceipt("replace", second, secondRev);
-    if (isRevisionMismatch(secondReceipt) && String(secondRev) !== "0") {
-      return attempt(0);
-    }
-    return second;
-  }
-  return first;
+export async function applyAtomic(
+  doc: SuperDocDocument,
+  args: { steps: unknown[]; expectedRevision?: string | number; changeMode?: string },
+) {
+  return withRevisionRetry(doc, args.expectedRevision, (expectedRevision) =>
+    doc.mutations.apply({
+      atomic: true,
+      steps: args.steps as never,
+      expectedRevision: String(expectedRevision),
+      changeMode: args.changeMode || "tracked",
+    }),
+  );
+}
+
+export async function createComment(
+  doc: SuperDocDocument,
+  args: { text: string; target: unknown },
+): Promise<ReceiptLike> {
+  // Comment anchors are not a tracked-change operation on this engine (AD-5: label direct).
+  const raw = await doc.comments.create({
+    text: args.text,
+    target: args.target as never,
+    changeMode: "direct",
+  } as never);
+  return {
+    ...asReceipt("comments.create", raw),
+    changeMode: "direct",
+    trackedUnsupported: true,
+  };
 }
 
 export async function resolveNodeType(
@@ -256,6 +313,7 @@ export function replaceAllSteps(
   replace: string,
   matches: MatchItem[],
   excludedIds: Set<string>,
+  selectOpts?: { caseSensitive?: boolean; wholeWord?: boolean },
 ) {
   const excluded: Array<{ blockId?: string; reason: string }> = [];
   const chosen: MatchItem[] = [];
@@ -268,41 +326,50 @@ export function replaceAllSteps(
     chosen.push(item);
   }
 
-  const steps = chosen.map((item, i) => {
-    if (item.target) {
-      return {
-        id: `replace-all-${i}`,
-        op: "text.rewrite" as const,
-        where: { by: "target" as const, target: item.target },
-        args: { replacement: { text: replace } },
-      };
-    }
-    if (item.handle?.ref) {
-      return {
-        id: `replace-all-${i}`,
-        op: "text.rewrite" as const,
-        where: { by: "ref" as const, ref: item.handle.ref },
-        args: { replacement: { text: replace } },
-      };
-    }
-    return {
-      id: `replace-all-${i}`,
-      op: "text.rewrite" as const,
-      where: {
-        by: "select" as const,
-        select: { type: "text" as const, pattern: search },
-        within: item.address?.nodeId
-          ? {
-              kind: "block" as const,
-              nodeType: (item.address.nodeType as "paragraph") || "paragraph",
-              nodeId: item.address.nodeId,
-            }
-          : undefined,
-        require: "exactlyOne" as const,
-      },
-      args: { replacement: { text: replace } },
-    };
-  });
+  const replacement = { args: { replacement: { text: replace } } };
+  const refs = chosen.map((item) => item.handle?.ref).filter((ref): ref is string => Boolean(ref));
 
-  return { chosen, excluded, steps };
+  // v2 text.rewrite accepts a ref from query.match or a single text selector.
+  if (excluded.length === 0) {
+    return {
+      chosen,
+      excluded,
+      steps: [
+        {
+          id: "replace-all-0",
+          op: "text.rewrite" as const,
+          where: {
+            by: "select" as const,
+            select: {
+              type: "text" as const,
+              pattern: search,
+              caseSensitive: selectOpts?.caseSensitive,
+              wholeWord: selectOpts?.wholeWord,
+            },
+            require: "all" as const,
+          },
+          ...replacement,
+        },
+      ],
+    };
+  }
+
+  if (refs.length === chosen.length && chosen.length > 0) {
+    return {
+      chosen,
+      excluded,
+      steps: chosen.map((item, i) => ({
+        id: `replace-all-${i}`,
+        op: "text.rewrite" as const,
+        where: { by: "ref" as const, ref: item.handle!.ref as string },
+        ...replacement,
+      })),
+    };
+  }
+
+  throw new MorphError(
+    "CAPABILITY_UNAVAILABLE",
+    "v2 replace-all with exclusions needs query.match refs; omitted matches cannot use a single selector",
+    { detail: { chosen: chosen.length, refs: refs.length, excluded: excluded.length } },
+  );
 }

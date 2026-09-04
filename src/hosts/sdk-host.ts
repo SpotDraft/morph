@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SuperDocClient, type SuperDocDocument } from "@superdoc/sdk";
-import { HANDLE_IDLE_MS, WORKER_SLOTS, superdocLicenseKey } from "../config/env.js";
+import { handleIdleMs, superdocLicenseKey, workerSlots } from "../config/env.js";
 import { MorphError } from "../errors.js";
 import type { UserInfo } from "../types.js";
 import { admitOrThrow } from "../admission/memory.js";
@@ -29,12 +29,12 @@ export class SdkHost {
   constructor() {
     this.idleTimer = setInterval(() => {
       void this.reapIdle();
-    }, Math.min(HANDLE_IDLE_MS, 30_000));
+    }, Math.min(handleIdleMs(), 30_000));
     this.idleTimer.unref();
   }
 
   slotsAvailable(): boolean {
-    return this.openCount < WORKER_SLOTS;
+    return this.openCount < workerSlots();
   }
 
   async getClient(): Promise<SuperDocClient> {
@@ -66,10 +66,13 @@ export class SdkHost {
   async openIsolated(opts: OpenHandleOptions): Promise<SuperDocDocument> {
     admitOrThrow("open");
     if (!this.slotsAvailable()) {
+      await this.reapOldest();
+    }
+    if (!this.slotsAvailable()) {
       throw new MorphError("ADMISSION", "No engine worker slots", {
         status: 503,
         retryAfter: 10,
-        detail: { slots: WORKER_SLOTS, open: this.openCount },
+        detail: { slots: workerSlots(), open: this.openCount },
       });
     }
     const existing = this.warm.get(opts.sessionId);
@@ -141,10 +144,22 @@ export class SdkHost {
   private async reapIdle(): Promise<void> {
     const now = Date.now();
     for (const [id, h] of this.warm) {
-      if (now - h.lastUsed > HANDLE_IDLE_MS) {
+      if (now - h.lastUsed > handleIdleMs()) {
         await this.closeHandle(id);
       }
     }
+  }
+
+  private async reapOldest(): Promise<void> {
+    let oldestId: string | null = null;
+    let oldest = Infinity;
+    for (const [id, h] of this.warm) {
+      if (h.lastUsed < oldest) {
+        oldest = h.lastUsed;
+        oldestId = id;
+      }
+    }
+    if (oldestId) await this.closeHandle(oldestId);
   }
 }
 

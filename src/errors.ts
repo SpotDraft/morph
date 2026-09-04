@@ -73,7 +73,8 @@ export function mapEngineCode(code: string | undefined): FailureCode {
     case "TARGET_NOT_FOUND":
     case "NO_OP":
     case "CAPABILITY_UNAVAILABLE":
-      return code;
+    case "TRACK_CHANGE_COMMAND_UNAVAILABLE":
+      return code === "TRACK_CHANGE_COMMAND_UNAVAILABLE" ? "CAPABILITY_UNAVAILABLE" : code;
     case "MATCH_NOT_FOUND":
       return "NO_MATCH";
     case "AMBIGUOUS_TARGET":

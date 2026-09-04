@@ -20,3 +20,5 @@
 - 404 is session expiry only. Persist/admission failures are 503.
 - Last-good DOCX is the durable snapshot. Export writes a distinct artifact and does not delete the session.
 - Node 20 (`nvm use`). `@superdoc/sdk` pulls `@superdoc/sdk-linux-x64`.
+- `mutations.apply` may reject `query.match`'s opaque revision and demand the live numeric revision. Retry from the engine error's "current revision".
+- Comments are labeled `direct` — the engine refuses tracked comment create.

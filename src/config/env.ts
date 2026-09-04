@@ -8,8 +8,16 @@ export const REDIS_URI = process.env.REDIS_URI || "";
 export const DATA_DIR = process.env.MORPH_DATA_DIR || "";
 export const MAX_FILE_SIZE = intEnv("MAX_FILE_SIZE", "52428800");
 export const FETCH_TIMEOUT = intEnv("FETCH_TIMEOUT", "30000");
-export const HANDLE_IDLE_MS = intEnv("MORPH_HANDLE_IDLE_MS", "120000");
-export const WORKER_SLOTS = intEnv("MORPH_WORKER_SLOTS", "8");
+export function handleIdleMs(): number {
+  return intEnv("MORPH_HANDLE_IDLE_MS", "120000");
+}
+
+export function workerSlots(): number {
+  return intEnv("MORPH_WORKER_SLOTS", "8");
+}
+
+export const HANDLE_IDLE_MS = handleIdleMs();
+export const WORKER_SLOTS = workerSlots();
 export const PUBLIC_BASE_URL = process.env.MORPH_PUBLIC_BASE_URL || "";
 
 /** Read at call time so tests can set the key after ESM imports hoist. */

@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node --import tsx src/server.ts",
     "dev": "node --import tsx --watch src/server.ts",
-    "test": "SUPERDOC_PUBLIC_LICENSE_KEY=${SUPERDOC_PUBLIC_LICENSE_KEY:-morph-test-license} node --import tsx --test tests/**/*.test.ts",
+    "test": "SUPERDOC_PUBLIC_LICENSE_KEY=${SUPERDOC_PUBLIC_LICENSE_KEY:-morph-test-license} node --import tsx --test --test-reporter spec tests/*.test.ts",
     "spike": "node --import tsx scripts/spike.ts"
   },
   "dependencies": {

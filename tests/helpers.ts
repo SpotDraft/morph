@@ -8,6 +8,7 @@ import { SdkHost, setHost } from "../src/hosts/sdk-host.js";
 import { MemoryPersistence, setPersistence } from "../src/persistence/store.js";
 
 process.env.SUPERDOC_PUBLIC_LICENSE_KEY ||= "morph-test-license";
+process.env.MORPH_WORKER_SLOTS ||= "32";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const morphRoot = path.resolve(here, "..");
@@ -31,6 +32,7 @@ export async function bootApp(): Promise<{
   registry: DocumentRegistry;
 }> {
   process.env.SUPERDOC_PUBLIC_LICENSE_KEY ||= "morph-test-license";
+  process.env.MORPH_WORKER_SLOTS ||= "32";
   const persist = new MemoryPersistence();
   const host = new SdkHost();
   const registry = new DocumentRegistry(persist, host);

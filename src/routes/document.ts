@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { checkReferences, findTerm } from "../documents/consistency.js";
 import {
+  applyAtomic,
   applyReplace,
   assertExactlyOne,
   assertExpectedTextOnMatch,
   buildOutline,
+  createComment,
   getBlock,
   queryMatch,
   resolveNodeType,
@@ -217,9 +219,8 @@ export async function documentRoutes(app: FastifyInstance) {
       const body = request.body as Record<string, unknown>;
       const sessionId = sessionIdOf(request);
       return getRegistry().mutate(sessionId, "mutations.apply", async (doc) => {
-        const receipt = await doc.mutations.apply({
-          atomic: true,
-          steps: (body.steps as never) ?? [],
+        const receipt = await applyAtomic(doc, {
+          steps: (body.steps as unknown[]) ?? [],
           expectedRevision: body.expectedRevision as string | undefined,
           changeMode: (body.changeMode as string) || "tracked",
         });
@@ -246,12 +247,7 @@ export async function documentRoutes(app: FastifyInstance) {
           target = match.items[0]?.target;
         }
         if (!target) throw new MorphError("VALIDATION", "target or phrase is required to anchor a comment");
-        const receipt = await doc.comments.create({
-          text: String(body.text ?? ""),
-          target: target as never,
-          changeMode: "tracked",
-        } as never);
-        return asReceipt("comments.create", receipt);
+        return createComment(doc, { text: String(body.text ?? ""), target });
       });
     }),
   );
