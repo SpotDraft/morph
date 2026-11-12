@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Document-engine command host — SuperDoc Document API over HTTP",
   "engines": {
-    "node": ">=22"
+    "node": "22.23.5"
   },
   "scripts": {
     "start": "node --import tsx src/server.ts",
